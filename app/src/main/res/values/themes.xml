@@ -7,4 +7,10 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
+
+    <!-- The player cuts in and out with no window animation: a video surface fading with its window flashes black. -->
+    <style name="Theme.CouchCommander.Player">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>

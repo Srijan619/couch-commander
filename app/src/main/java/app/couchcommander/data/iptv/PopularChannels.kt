@@ -97,20 +97,25 @@ object PopularChannels {
      * the sharper feed; the same channel in UHD and FHD shows once, as the sharper one.
      */
     fun group(channels: List<IptvChannel>, home: String?): List<Brand> =
-        // Filtered again here: a list stored by an older sync can still hold event slots.
-        channels.filterNot(::isEventSlot).groupBy { brand(it) }.filterKeys { it != null }
+        // Filtered again here: a list stored by an older sync can still hold event slots. Each channel's name is read
+        // once up front: the reading (folding, superscripts, regexes) is what costs, and sorting would repeat it.
+        channels.filterNot(::isEventSlot)
+            .mapNotNull { c -> brand(c)?.let { b -> quality(c).let { q -> Facts(c, b, q, name(c, b), country(c), qualityTag(c, q)) } } }
+            .groupBy { it.brand }
             .map { (brand, list) ->
                 val picks = list
-                    .sortedWith(compareByDescending<IptvChannel> { quality(it) }.thenBy { it.number ?: Int.MAX_VALUE })
-                    .map { it to name(it, brand!!) }
+                    .sortedWith(compareByDescending<Facts> { it.quality }.thenBy { it.channel.number ?: Int.MAX_VALUE })
                     // The same channel from one country once, as its sharpest feed.
-                    .distinctBy { (it, name) -> "${name.lowercase()}|${country(it)}" }
-                    .sortedBy { (it, _) -> if (home != null && country(it) == home) 0 else 1 }
-                    .map { (it, name) -> Pick(it, name, listOfNotNull(country(it), qualityTag(it)).joinToString(" · ")) }
-                val (sharp, other) = picks.partition { quality(it.channel) > 0 }
-                Brand(brand!!, sharp.take(MAX_PER_BRAND), other.take(MAX_PER_BRAND))
+                    .distinctBy { "${it.name.lowercase()}|${it.country}" }
+                    .sortedBy { if (home != null && it.country == home) 0 else 1 }
+                val (sharp, other) = picks.partition { it.quality > 0 }
+                Brand(brand, sharp.take(MAX_PER_BRAND).map(Facts::pick), other.take(MAX_PER_BRAND).map(Facts::pick))
             }
             .sortedBy { b -> BRANDS.indexOfFirst { it.first == b.name } }
+
+    private class Facts(val channel: IptvChannel, val brand: String, val quality: Int, val name: String, val country: String?, val tag: String?) {
+        fun pick() = Pick(channel, name, listOfNotNull(country, tag).joinToString(" · "))
+    }
 
     /**
      * Any channel as a tile, for "Most watched": a brand's channel as in its brand's row ("Main Event", "UK · UHD"),
@@ -134,7 +139,7 @@ object PopularChannels {
 
     private fun country(channel: IptvChannel) = PREFIX.find(channel.name)?.groupValues?.get(1)?.uppercase()
 
-    private fun qualityTag(channel: IptvChannel): String? = when (quality(channel)) {
+    private fun qualityTag(channel: IptvChannel, quality: Int = quality(channel)): String? = when (quality) {
         2 -> "UHD"
         1 -> "FHD"
         else -> (Names.fold(plain(channel.name)) + " " + Names.fold(channel.group)).split(' ').let { w ->

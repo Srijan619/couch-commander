@@ -113,6 +113,19 @@ class PlayerActivity : ComponentActivity() {
         play(index)
     }
 
+    // Back or Home: silence the stream at once, holding its last frame (detaching the view would show black until
+    // the launcher is up). The release, which waits on the decoder, stays in onStop, after the launcher has drawn.
+    // Something that only covers the player for a moment (the assistant) gets it back on resume.
+    override fun onPause() {
+        super.onPause()
+        player?.pause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        player?.play()
+    }
+
     override fun onStop() {
         flushWatched()
         super.onStop()

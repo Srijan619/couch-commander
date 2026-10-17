@@ -163,7 +163,17 @@ fun FootballScreen(
     val day = remember(league, leagueMatches, minute) { league?.let { LeaguePage.today(leagueMatches[it.id].orEmpty(), minute, zone) } }
     val followed = remember(teams) { teams.mapTo(mutableSetOf()) { it.id } }
     val home = remember { Names.homeCountry(ZoneId.systemDefault().id, Locale.getDefault().country) }
-    val brands = remember(popular, health, home) { PopularChannels.group(ChannelHealth.order(popular, health, Instant.now()) { it }, home) }
+    // Off the main thread: the player updates the health records, and grouping the playlist's ~1,200 channels again
+    // inside composition held the launcher's first frame for two seconds on the TV when coming back from it.
+    val brands by produceState(emptyList<PopularChannels.Brand>(), popular, health, home) {
+        value = withContext(Dispatchers.Default) { PopularChannels.group(ChannelHealth.order(popular, health, Instant.now()) { it }, home) }
+    }
+    // Likewise each match's chips. A match whose chips came out the same keeps the same object, so its card skips
+    // recomposing; handing every card the health records redrew them all whenever the player updated them.
+    val chips by produceState(remember { chipsFor(watch, health, home, emptyMap()) }, watch, health, home) {
+        val previous = value
+        value = withContext(Dispatchers.Default) { chipsFor(watch, health, home, previous) }
+    }
 
     val firstWatch = cards.indexOfFirst { (m, _) -> !watch[m.id].isNullOrEmpty() }
     val firstLeagueWatch = day?.matches?.indexOfFirst { !it.finished && !watch[it.id].isNullOrEmpty() } ?: -1
@@ -224,10 +234,9 @@ fun FootballScreen(
                     if (cards.isEmpty()) NothingToday(today.next, minute, zone, is24Hour)
                     cards.forEachIndexed { i, (m, lines) ->
                         MatchCard(
-                            m, lines, watch[m.id].orEmpty(), hasPlaylist, accent, active,
+                            m, lines, chips[m.id], hasPlaylist, accent, active,
                             focus = if (i == firstWatch) first else null,
                             large = cards.size == 1,
-                            health = health,
                             onWatch = onWatch,
                         )
                     }
@@ -250,10 +259,9 @@ fun FootballScreen(
                             )
                         }
                         LeagueRow(
-                            m, result = i >= day.firstResult && day.firstResult >= 0, followed, watch[m.id].orEmpty(), hasPlaylist,
+                            m, result = i >= day.firstResult && day.firstResult >= 0, followed, chips[m.id], hasPlaylist,
                             minute, zone, is24Hour, accent, active,
                             focus = if (i == firstLeagueWatch) first else null,
-                            health = health,
                             onWatch = onWatch,
                         )
                     }
@@ -381,7 +389,7 @@ private fun LeagueRow(
     match: FootballMatch,
     result: Boolean,
     followed: Set<Int>,
-    options: List<WatchOption>,
+    chips: MatchChips?,
     hasPlaylist: Boolean,
     now: Instant,
     zone: ZoneId,
@@ -389,7 +397,6 @@ private fun LeagueRow(
     accent: Color,
     active: Boolean,
     focus: FocusRequester?,
-    health: Map<String, ChannelRecord>,
     onWatch: (FootballMatch, List<WatchAttempt>) -> Unit,
 ) {
     RowCard(live = match.live && !result, modifier = Modifier.alpha(if (result) 0.6f else 1f)) {
@@ -410,7 +417,7 @@ private fun LeagueRow(
         }
         when {
             result -> Box(Modifier.width(CHIPS_WIDTH))
-            options.isNotEmpty() -> ProviderChips(match, options, health, accent, active, focus, maxChips = MAX_CHIPS, onWatch = onWatch)
+            chips != null -> ProviderChips(match, chips, accent, active, focus, maxChips = MAX_CHIPS, onWatch = onWatch)
             hasPlaylist -> Box(Modifier.width(CHIPS_WIDTH)) { Text("Not in your playlist", fontSize = 13.sp, color = Palette.Muted) }
         }
     }
@@ -469,13 +476,12 @@ private fun NothingToday(next: FootballMatch?, now: Instant, zone: ZoneId, is24H
 private fun MatchCard(
     match: FootballMatch,
     lines: FootballLines,
-    options: List<WatchOption>,
+    chips: MatchChips?,
     hasPlaylist: Boolean,
     accent: Color,
     active: Boolean,
     focus: FocusRequester?,
     large: Boolean,
-    health: Map<String, ChannelRecord>,
     onWatch: (FootballMatch, List<WatchAttempt>) -> Unit,
 ) {
     RowCard(live = lines.live, padding = PaddingValues(start = 22.dp, end = 12.dp, top = 14.dp, bottom = 14.dp)) {
@@ -498,9 +504,33 @@ private fun MatchCard(
         }
 
         when {
-            options.isNotEmpty() -> ProviderChips(match, options, health, accent, active, focus, maxChips = MAX_CHIPS, onWatch = onWatch)
+            chips != null -> ProviderChips(match, chips, accent, active, focus, maxChips = MAX_CHIPS, onWatch = onWatch)
             hasPlaylist -> Box(Modifier.width(CHIPS_WIDTH)) { Text("Not in your playlist", fontSize = 13.sp, color = Palette.Muted) }
         }
+    }
+}
+
+/** A match's ways to watch: [usable] feeds in the order to try them, and [providers], one per chip. */
+private data class MatchChips(val usable: List<WatchOption>, val providers: List<Pair<String, WatchOption>>)
+
+/**
+ * Hidden channels drop out, ones that played lately come first and recent failures last (ChannelHealth); then one
+ * chip per provider, the viewer's country first. Health counts more than country: a Finnish channel that just failed
+ * still goes after one that works. Chips equal to [previous]'s are its very objects.
+ */
+private fun chipsFor(
+    watch: Map<Long, List<WatchOption>>,
+    health: Map<String, ChannelRecord>,
+    home: String?,
+    previous: Map<Long, MatchChips>,
+): Map<Long, MatchChips> {
+    val now = Instant.now()
+    return watch.filterValues { it.isNotEmpty() }.mapValues { (id, options) ->
+        val usable = ChannelHealth.order(options, health, now) { it.channel }
+        val byLabel = usable.groupBy { Names.provider(it.channel, it.score == 3) }.mapValues { it.value.first() }
+        val byCountry = Names.homeFirst(byLabel.keys.toList(), home).map { it to byLabel.getValue(it) }
+        val chips = MatchChips(usable, ChannelHealth.order(byCountry, health, now) { it.second.channel })
+        previous[id]?.takeIf { it == chips } ?: chips
     }
 }
 
@@ -511,24 +541,14 @@ private fun MatchCard(
 @Composable
 private fun ProviderChips(
     match: FootballMatch,
-    options: List<WatchOption>,
-    health: Map<String, ChannelRecord>,
+    chips: MatchChips,
     accent: Color,
     active: Boolean,
     focus: FocusRequester?,
     maxChips: Int,
     onWatch: (FootballMatch, List<WatchAttempt>) -> Unit,
 ) {
-    val home = remember { Names.homeCountry(ZoneId.systemDefault().id, java.util.Locale.getDefault().country) }
-    // Hidden channels drop out, ones that played lately come first and recent failures last (ChannelHealth); then
-    // one chip per provider, the viewer's country first. Health counts more than country: a Finnish channel that just
-    // failed still goes after one that works.
-    val usable = remember(options, health) { ChannelHealth.order(options, health, Instant.now()) { it.channel } }
-    val providers = remember(usable, home, health) {
-        val byLabel = usable.groupBy { Names.provider(it.channel, it.score == 3) }.mapValues { it.value.first() }
-        val byCountry = Names.homeFirst(byLabel.keys.toList(), home).map { it to byLabel.getValue(it) }
-        ChannelHealth.order(byCountry, health, Instant.now()) { it.second.channel }
-    }
+    val (usable, providers) = chips
     // Pressing a chip tries it first, then the other chips, then every other feed for the match.
     fun attempts(first: WatchOption): List<WatchAttempt> =
         (listOf(first) + providers.map { it.second } + usable).distinctBy { it.channel.url }.take(MAX_ATTEMPTS)

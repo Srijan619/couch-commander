@@ -62,7 +62,8 @@
         <activity
             android:name=".player.PlayerActivity"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize"
-            android:exported="false" />
+            android:exported="false"
+            android:theme="@style/Theme.CouchCommander.Player" />
 
         <!-- Opt-in Home button takeover for TVs that don't let you pick a home app (Google TV). -->
         <service
