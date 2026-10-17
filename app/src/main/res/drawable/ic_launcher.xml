@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A row of bright tiles on a dark ground, the focused one raised. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path android:fillColor="#0B0B12" android:pathData="M0,0h48v48h-48z" />
+    <path android:fillColor="#FF5A36" android:pathData="M6,26h10v8h-10z" />
+    <path android:fillColor="#C8F031" android:pathData="M18,22h12v12h-12z" />
+    <path android:fillColor="#6C4DFF" android:pathData="M32,26h10v8h-10z" />
+</vector>

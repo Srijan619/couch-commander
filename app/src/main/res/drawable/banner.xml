@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 320x180 TV banner: the icon's tile row, wider. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path android:fillColor="#0B0B12" android:pathData="M0,0h320v180h-320z" />
+    <path android:fillColor="#FF5A36" android:pathData="M40,96h64v40h-64z" />
+    <path android:fillColor="#C8F031" android:pathData="M120,80h80v56h-80z" />
+    <path android:fillColor="#6C4DFF" android:pathData="M216,96h64v40h-64z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M120,148h80v4h-80z" />
+</vector>

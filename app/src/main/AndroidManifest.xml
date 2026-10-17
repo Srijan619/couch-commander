@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Downloads the public-domain artwork from Wikimedia Commons. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Sets the art screensaver from settings (Google TV hides it). Only adb grants this: scripts/set-home.sh. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
+
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.software.live_tv" android:required="false" />
+
+    <!-- Makes TV apps (and, optionally, phone apps sideloaded onto the TV) visible to the app list. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <!-- The packages behind the TV's inputs, so their labels (HDMI 1, a CEC device's name) can be loaded. -->
+        <intent>
+            <action android:name="android.media.tv.TvInputService" />
+        </intent>
+    </queries>
+
+    <!-- usesCleartextTraffic: IPTV playlists, guides and streams are mostly plain http. The playlist login and
+         the synced channels (their URLs hold it) are kept out of backups. -->
+    <application
+        android:name=".LauncherApp"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:usesCleartextTraffic="true"
+        android:banner="@drawable/banner"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.CouchCommander">
+
+        <activity
+            android:name=".MainActivity"
+            android:clearTaskOnLaunch="true"
+            android:configChanges="keyboard|keyboardHidden|navigation"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:resumeWhilePausing="true"
+            android:stateNotNeeded="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <!-- Also listed in the stock launcher, so it can be opened before it is the home app. -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Full-screen IPTV playback from the football page. -->
+        <activity
+            android:name=".player.PlayerActivity"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize"
+            android:exported="false" />
+
+        <!-- Opt-in Home button takeover for TVs that don't let you pick a home app (Google TV). -->
+        <service
+            android:name=".system.HomeButtonService"
+            android:exported="true"
+            android:label="@string/home_button_service"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/home_button_service" />
+        </service>
+
+        <!-- The ambient-art screensaver. -->
+        <service
+            android:name=".dream.ArtDream"
+            android:exported="true"
+            android:label="@string/dream_name"
+            android:permission="android.permission.BIND_DREAM_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.dreams.DreamService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.dream"
+                android:resource="@xml/dream" />
+        </service>
+
+        <!-- Sets the IPTV playlist over adb; only the shell holds DUMP. See IptvSourceReceiver. -->
+        <receiver
+            android:name=".data.iptv.IptvSourceReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="app.couchcommander.SET_IPTV" />
+                <action android:name="app.couchcommander.SYNC_IPTV" />
+                <action android:name="app.couchcommander.CLEAR_IPTV" />
+                <action android:name="app.couchcommander.DEBUG_IPTV" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older. The IPTV login and the channel URLs that contain it never leave the TV. -->
+<full-backup-content>
+    <exclude domain="file" path="iptv-source.bin" />
+    <exclude domain="file" path="iptv.json" />
+</full-backup-content>

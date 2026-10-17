@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Couch Commander</string>
+    <string name="dream_name">Couch Commander art</string>
+    <string name="home_button_service">Couch Commander Home button</string>
+    <string name="home_button_description">Opens Couch Commander when you press Home, instead of the TV\'s own home screen. It only notices when the stock launcher opens; it reads nothing on screen.</string>
+    <color name="ground">#0B0B12</color>
+</resources>

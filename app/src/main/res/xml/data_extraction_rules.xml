@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12 and newer: as backup_rules.xml, for cloud backup and device transfer. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="iptv-source.bin" />
+        <exclude domain="file" path="iptv.json" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="iptv-source.bin" />
+        <exclude domain="file" path="iptv.json" />
+    </device-transfer>
+</data-extraction-rules>
