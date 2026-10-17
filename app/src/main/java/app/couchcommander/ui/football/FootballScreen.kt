@@ -177,7 +177,7 @@ fun FootballScreen(
 
     val firstWatch = cards.indexOfFirst { (m, _) -> !watch[m.id].isNullOrEmpty() }
     val firstLeagueWatch = day?.matches?.indexOfFirst { !it.finished && !watch[it.id].isNullOrEmpty() } ?: -1
-    // With nothing to press on the open tab, focus rests on the tab itself.
+    // Whether the open tab has something to press below the tabs; the footer offers Down only then.
     val hasTarget = when {
         !hasPlaylist -> true
         showChannels -> brands.isNotEmpty() || mostWatched.isNotEmpty()
@@ -191,7 +191,8 @@ fun FootballScreen(
     LaunchedEffect(active) {
         if (!active) return@LaunchedEffect
         withFrameNanos { }
-        runCatching { if (hasTarget) first.requestFocus() else tabFocus[selected].requestFocus() }
+        // On the open tab ("My teams"), not on a match's first channel: one OK too many would start a stream.
+        runCatching { tabFocus[selected].requestFocus() }
     }
 
     Box(Modifier.fillMaxSize().background(Palette.Ground)) {

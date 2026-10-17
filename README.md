@@ -15,6 +15,8 @@ adb connect <tv-ip>:5555             # TV: Developer options › ADB debugging (
 adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 
+Always install the release build on the TV, never `app-debug.apk`: the debug build is several times slower to navigate there. Release is signed with the debug key, so it installs over an existing build. Installing closes the app, so don't install while something is playing in it.
+
 ## Make it the home screen
 
 On TVs that offer a choice, press Home and pick **Couch Commander**, or choose it as the default home app in the TV's settings.
