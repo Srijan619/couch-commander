@@ -183,11 +183,17 @@ fun ContinueTile(
         Column(Modifier.align(Alignment.BottomStart).padding(start = 10.dp, end = 10.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(title.title, color = Palette.White, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (line.isNotEmpty()) Text(line, color = Palette.Muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-            // Inside the card, clear of its rounded corners; a few minutes in still shows as a dot.
-            Box(Modifier.padding(top = 6.dp).fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(ProgressTrack)) {
-                Box(Modifier.fillMaxWidth(watching.progress.coerceAtLeast(0.02f)).fillMaxHeight().clip(RoundedCornerShape(2.dp)).background(Palette.White))
-            }
+            // Inside the card, clear of its rounded corners.
+            WatchedBar(watching.progress, Modifier.padding(top = 6.dp).fillMaxWidth())
         }
+    }
+}
+
+/** How far in something was left, as on Continue's cards; a few minutes in still shows as a dot. */
+@Composable
+fun WatchedBar(progress: Float, modifier: Modifier = Modifier) {
+    Box(modifier.height(4.dp).clip(RoundedCornerShape(2.dp)).background(ProgressTrack)) {
+        Box(Modifier.fillMaxWidth(progress.coerceAtLeast(0.02f)).fillMaxHeight().clip(RoundedCornerShape(2.dp)).background(Palette.White))
     }
 }
 
@@ -195,7 +201,7 @@ fun ContinueTile(
 private const val LONG_PRESS_MS = 600L
 
 /** "1 h 12 min left", "42 min left"; null before the length is known. */
-private fun timeLeft(w: Watching): String? {
+internal fun timeLeft(w: Watching): String? {
     if (w.durationMs <= 0) return null
     val minutes = ((w.durationMs - w.positionMs).coerceAtLeast(0) / 60_000).toInt()
     return when {

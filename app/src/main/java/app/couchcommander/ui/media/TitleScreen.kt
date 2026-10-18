@@ -23,7 +23,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,6 +46,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.onKeyEvent
@@ -73,6 +75,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.couchcommander.data.media.MediaRepository
 import app.couchcommander.data.media.TmdbAccount
+import app.couchcommander.data.media.Watching
 import app.couchcommander.ui.Icons
 import app.couchcommander.ui.home.confirmKeys
 import app.couchcommander.ui.page.ActionPill
@@ -86,6 +89,7 @@ import app.media.MovieDetails
 import app.media.Seasons
 import app.media.TitleExtras
 import java.time.LocalDate
+import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -458,7 +462,7 @@ fun TitleScreen(
                             EpisodeRow(
                                 e, next = full.nextEpisode?.let { it.season == e.season && it.number == e.number } == true, today, accent, active,
                                 playable = onPanel != null,
-                                note = left?.let { "Left at ${playTime(it.positionMs)}" },
+                                left = left,
                             ) { onPanel?.let { play(it, e.title, left?.positionMs ?: 0) } }
                         }
                     }
@@ -471,14 +475,30 @@ fun TitleScreen(
             }
             if (related.isNotEmpty()) {
                 Text("More like this", fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 26.dp, bottom = 4.dp))
+                val relatedState = remember(title.id) { LazyListState() }
+                val relatedFocus = remember(related) { List(related.size) { FocusRequester() } }
+                fun relatedRequester(i: Int) = if (firstTarget == "related" && i == 0) first else relatedFocus[i]
                 LazyRow(
-                    Modifier.offset(x = (-6).dp),
+                    Modifier
+                        .offset(x = (-6).dp)
+                        // Down from an episode lands on the leftmost title in view. Left to itself, focus goes to the
+                        // title nearest the middle of the wide card it left.
+                        .focusProperties {
+                            onEnter = {
+                                if (requestedFocusDirection == FocusDirection.Down || requestedFocusDirection == FocusDirection.Up) {
+                                    val seen = relatedState.layoutInfo.visibleItemsInfo
+                                    val leftmost = seen.firstOrNull { it.offset >= 0 } ?: seen.firstOrNull()
+                                    runCatching { relatedRequester(leftmost?.index ?: 0).requestFocus() }
+                                }
+                            }
+                        }
+                        .focusGroup(),
+                    state = relatedState,
                     contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    items(related, key = { it.id }) { t ->
-                        val focus = if (firstTarget == "related" && t == related.first()) first else null
-                        PosterTile(t, active, focus, onFocused = {}) { onOpen(t) }
+                    itemsIndexed(related, key = { _, t -> t.id }) { i, t ->
+                        PosterTile(t, active, relatedRequester(i), onFocused = {}) { onOpen(t) }
                     }
                 }
             }
@@ -571,8 +591,9 @@ private fun versionLabels(versions: List<VodEntry>): List<String> {
 }
 
 /**
- * One episode on a line: its number, title, length or air date; dimmed until it's out, a dot on the next to air.
- * One on the IPTV panel shows a play mark and plays with OK.
+ * One episode as a card: its still, a "Next episode" label, number and title, air date, length and
+ * score, and the start of its plot; dimmed until it's out. The one Continue stopped at shows how far in it was left,
+ * with Continue's bar. One on the IPTV panel shows a play mark and plays with OK.
  */
 @Composable
 private fun EpisodeRow(
@@ -582,13 +603,19 @@ private fun EpisodeRow(
     accent: Color,
     active: Boolean,
     playable: Boolean,
-    /** "Left at 12:30" on the episode Continue stopped at. */
-    note: String?,
+    /** Continue's entry when it stopped part way into this episode. */
+    left: Watching?,
     onPlay: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val upcoming = episode.isUpcoming(today.toString())
+    val still = rememberRemoteImage(episode.stillUrl, EPISODE_STILL_WIDTH)
+    val line = listOfNotNull(
+        left?.let(::timeLeft),
+        MediaText.episodeLine(episode, today).takeIf { it.isNotEmpty() },
+        "★ ${"%.1f".format(Locale.ROOT, episode.rating)}".takeIf { episode.rating > 0 && !upcoming },
+    ).joinToString(" · ")
     Row(
         Modifier
             .fillMaxWidth()
@@ -598,17 +625,27 @@ private fun EpisodeRow(
             // A row the panel doesn't have still takes focus, so the remote can scroll the list.
             .clickable(interactionSource = interaction, indication = null, role = Role.Button) { if (playable) onPlay() }
             .height(EPISODE_HEIGHT)
-            .padding(horizontal = 16.dp)
+            .padding(EPISODE_PADDING)
             .alpha(if (upcoming) 0.6f else 1f),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Row(Modifier.width(44.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (next) Box(Modifier.size(7.dp).clip(CircleShape).background(accent))
-            Text("E${episode.number}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp)
+        Box(Modifier.size(EPISODE_STILL_WIDTH, EPISODE_STILL_HEIGHT).clip(RoundedCornerShape(8.dp)).background(EpisodeGround)) {
+            still?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
+            left?.let {
+                // Over a dark foot, as on Continue's cards, so the bar shows on a bright still.
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to Color(0xB3000000))))
+                WatchedBar(it.progress, Modifier.align(Alignment.BottomStart).padding(8.dp).fillMaxWidth())
+            }
         }
-        Text(episode.title, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-        Text(note ?: MediaText.episodeLine(episode, today), fontSize = 12.sp, color = if (note != null) accent else Palette.Muted, maxLines = 1)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            if (next) Text("NEXT EPISODE", fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp, color = accent)
+            Text("E${episode.number} · ${episode.title}", fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (line.isNotEmpty()) Text(line, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Palette.Muted, maxLines = 1)
+            episode.overview?.takeIf { it.isNotBlank() }?.let {
+                Text(it, fontSize = 13.sp, color = Palette.Muted, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 17.sp)
+            }
+        }
         if (playable) Icon(Icons.Play, "Play", tint = if (focused) Palette.White else Palette.Muted, modifier = Modifier.size(14.dp))
     }
 }

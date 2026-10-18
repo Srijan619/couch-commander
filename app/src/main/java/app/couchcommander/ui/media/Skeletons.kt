@@ -8,6 +8,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -57,16 +58,20 @@ fun SkeletonTab(pulse: State<Float>, width: Dp = 84.dp) {
     Box(Modifier.padding(horizontal = 4.dp, vertical = 6.dp).size(width, 22.dp).skeleton(pulse, 8.dp))
 }
 
-/** Where an episode's row will be: its height, with a number and a title in grey. */
+/** Where an episode's card will be: its height, with its still, a title and the start of its plot in grey. */
 @Composable
 fun SkeletonEpisode(pulse: State<Float>) {
     Row(
-        Modifier.fillMaxWidth().height(EPISODE_HEIGHT).skeleton(pulse, 12.dp).padding(horizontal = 16.dp),
+        Modifier.fillMaxWidth().height(EPISODE_HEIGHT).skeleton(pulse, 12.dp).padding(EPISODE_PADDING),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Box(Modifier.width(28.dp).height(10.dp).skeleton(pulse, 4.dp))
-        Box(Modifier.width(220.dp).height(12.dp).skeleton(pulse, 4.dp))
+        Box(Modifier.size(EPISODE_STILL_WIDTH, EPISODE_STILL_HEIGHT).skeleton(pulse, 8.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.width(220.dp).height(12.dp).skeleton(pulse, 4.dp))
+            Box(Modifier.width(140.dp).height(10.dp).skeleton(pulse, 4.dp))
+            Box(Modifier.width(360.dp).height(10.dp).skeleton(pulse, 4.dp))
+        }
     }
 }
 
@@ -76,8 +81,12 @@ fun SkeletonPosterRow(pulse: State<Float>, count: Int = 8, modifier: Modifier = 
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp)) { repeat(count) { SkeletonPoster(pulse) } }
 }
 
-/** An episode row's height (EpisodeRow), so the list keeps its length. */
-val EPISODE_HEIGHT = 50.dp
+/** An episode card's still (EpisodeRow): 16:9. */
+val EPISODE_STILL_WIDTH = 160.dp
+val EPISODE_STILL_HEIGHT = 90.dp
+val EPISODE_PADDING = 10.dp
+/** An episode card's height, so the list keeps its length. */
+val EPISODE_HEIGHT = EPISODE_STILL_HEIGHT + EPISODE_PADDING * 2
 /** An ActionPill's height: 15 sp text and 8 dp padding above and below. */
 private val PILL_HEIGHT = 36.dp
 private const val PULSE_LOW = 0.05f
