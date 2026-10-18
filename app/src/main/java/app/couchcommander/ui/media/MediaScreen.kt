@@ -191,6 +191,8 @@ fun MediaScreen(
     val posterFocus = remember { HashMap<String, FocusRequester>() }
     fun requester(key: String) = posterFocus.getOrPut(key) { FocusRequester() }
     var lastPoster by remember { mutableStateOf<String?>(null) }
+    // Each shelf's last focused title, by tab and shelf: Up or Down back onto a shelf returns to it.
+    val shelfPoster = remember { HashMap<String, String>() }
     var inTabs by remember { mutableStateOf(false) }
     // The title the hero shows: the focused poster's, a moment after focus lands, so scrolling past doesn't load
     // every still on the way. Both are held as State and only read inside the hero's own composables: read here,
@@ -287,10 +289,15 @@ fun MediaScreen(
                     // Up from anywhere on the shelves lands on the open tab.
                     .focusProperties {
                         onEnter = { tabFocus[tab].requestFocus() }
-                        // Down goes to the first shelf's first title, even when the shelves are scrolled past it.
+                        // Down goes back to the title Up came from: the shelves stay where they were, so it's the one
+                        // in view. With none yet on this tab, the first shelf's first title.
                         onExit = {
-                            val first = rows.firstOrNull { it.titles.isNotEmpty() }?.let { key(tab, it.id, it.titles.first()) }
-                            if (requestedFocusDirection == FocusDirection.Down && first != null) requester(first).requestFocus()
+                            if (requestedFocusDirection == FocusDirection.Down) {
+                                val back = lastPoster?.takeIf { it.startsWith("$tab/") }
+                                if (back == null || !requester(back).requestFocus()) {
+                                    rows.firstOrNull { it.titles.isNotEmpty() }?.let { requester(key(tab, it.id, it.titles.first())).requestFocus() }
+                                }
+                            }
                         }
                     }
                     .onFocusChanged { inTabs = it.hasFocus }
@@ -356,16 +363,20 @@ fun MediaScreen(
                             LazyRow(
                                 Modifier
                                     .weight(1f)
-                                    // Up or Down onto a shelf lands on its leftmost title in view. Left to itself,
-                                    // focus goes to the title nearest the middle of the one it left, which under a
-                                    // wide Continue card is the second poster.
+                                    // Up or Down onto a shelf goes back to the title last focused on it, else its
+                                    // leftmost title in view. Left to itself, focus goes to the title nearest the
+                                    // middle of the one it left, which under a wide Continue card is the second
+                                    // poster. Always the leftmost in view drifted: landing scrolls the title a third
+                                    // of the way in, bringing the one before it into view for the next time.
                                     .focusProperties {
                                         onEnter = {
                                             if (requestedFocusDirection == FocusDirection.Down || requestedFocusDirection == FocusDirection.Up) {
-                                                val seen = rowState.layoutInfo.visibleItemsInfo
-                                                val first = seen.firstOrNull { it.offset >= 0 } ?: seen.firstOrNull()
-                                                android.util.Log.d("CCDBG", "enter ${row.id} dir=$requestedFocusDirection seen=${seen.map { it.index to it.offset }} first=${first?.index}")
-                                                row.titles.getOrNull(first?.index ?: 0)?.let { requester(key(tab, row.id, it)).requestFocus() }
+                                                val back = shelfPoster["$tab/${row.id}"]?.takeIf { k -> row.titles.any { key(tab, row.id, it) == k } }
+                                                if (back == null || !requester(back).requestFocus()) {
+                                                    val seen = rowState.layoutInfo.visibleItemsInfo
+                                                    val first = seen.firstOrNull { it.offset >= 0 } ?: seen.firstOrNull()
+                                                    row.titles.getOrNull(first?.index ?: 0)?.let { requester(key(tab, row.id, it)).requestFocus() }
+                                                }
                                             }
                                         }
                                     }
@@ -379,12 +390,12 @@ fun MediaScreen(
                                     val k = key(tab, row.id, title)
                                     val left = row.continued[title.ref]
                                     if (left != null) {
-                                        ContinueTile(left, shelvesActive, requester(k), onFocused = { lastPoster = k; hovered.value = title }, onLongClick = {
+                                        ContinueTile(left, shelvesActive, requester(k), onFocused = { lastPoster = k; shelfPoster["$tab/${row.id}"] = k; hovered.value = title }, onLongClick = {
                                             okHeld = true
                                             opened = listOf(title)
                                         }) { resume(left) }
                                     } else {
-                                        PosterTile(title, shelvesActive, requester(k), onFocused = { lastPoster = k; hovered.value = title }) {
+                                        PosterTile(title, shelvesActive, requester(k), onFocused = { lastPoster = k; shelfPoster["$tab/${row.id}"] = k; hovered.value = title }) {
                                             opened = listOf(title)
                                         }
                                     }

@@ -130,7 +130,7 @@ fun HeroText(title: MovieDetails?, accent: Color, modifier: Modifier = Modifier)
 }
 
 /** How long focus rests on a title before its trailer starts: browsing past doesn't load one for each. */
-private const val TRAILER_DELAY_MS = 2_500L
+private const val TRAILER_DELAY_MS = 1_000L
 /** With the header, about the top half of the page is the hero's, as on Netflix: the shelves start below it. */
 val HERO_TEXT_HEIGHT = 200.dp
 

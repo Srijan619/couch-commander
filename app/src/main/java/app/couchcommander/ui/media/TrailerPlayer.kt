@@ -25,7 +25,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -119,8 +121,16 @@ private fun OneVideo(key: String, playing: Boolean, muted: Boolean, loop: Boolea
         v.js(if (playing) "player.playVideo()" else "player.pauseVideo()")
     }
 
+    // The page is told the view's shape: the TV's WebView gets 100vh wrong, centring the video too high and leaving
+    // black under it.
+    var size by remember { mutableStateOf(IntSize.Zero) }
+    LaunchedEffect(ready, size) {
+        val v = view?.takeIf { ready && size.width > 0 } ?: return@LaunchedEffect
+        v.evaluateJavascript("fit(${size.height.toFloat() * PAGE_WIDTH / size.width})", null)
+    }
+
     AndroidView(
-        modifier = modifier.graphicsLayer { this.alpha = alpha },
+        modifier = modifier.onSizeChanged { size = it }.graphicsLayer { this.alpha = alpha },
         factory = { context ->
             PassThroughWebView(context).apply {
                 // AndroidView's default WRAP_CONTENT makes a WebView size its page to the content: here, zero high.
@@ -244,6 +254,15 @@ private fun playerHtml(key: String, zoom: Float) = """
   src="https://www.youtube.com/embed/$key?enablejsapi=1&mute=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&cc_load_policy=0&playsinline=1&rel=0&origin=$ORIGIN"></iframe>
 <script>
   var player;
+  // Covers a page [h] CSS pixels high, as the iframe's CSS would if 100vh were right.
+  function fit(h) {
+    var w = $PAGE_WIDTH, f = document.getElementById('player').style;
+    document.documentElement.style.height = document.body.style.height = h + 'px';
+    f.width = Math.max(w, h * 16 / 9) * $zoom + 'px';
+    f.height = Math.max(h, w * 9 / 16) * $zoom + 'px';
+    f.top = h / 2 + 'px';
+    f.left = w / 2 + 'px';
+  }
   function onYouTubeIframeAPIReady() {
     player = new YT.Player('player', { events: {
       onReady: function (e) {
