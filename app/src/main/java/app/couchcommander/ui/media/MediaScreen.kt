@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -91,7 +92,7 @@ import kotlinx.coroutines.flow.collectLatest
  * on top, so Back walks back through them; OK on a Continue card plays it from where it was left, without the
  * page in between. Back from the shelves goes home. The account pill at the end of the
  * tabs signs in to TMDB from a phone; signed in, the watchlist and favourites come before TMDB's lists. The search
- * pill before it opens [SearchScreen] over the shelves, starting on the open tab's kind.
+ * pill, first on the tabs' line, opens [SearchScreen] over the shelves, starting on the open tab's kind.
  */
 // LocalBringIntoViewSpec: the standard way to pin focus on TV, still marked experimental.
 @OptIn(ExperimentalFoundationApi::class)
@@ -256,6 +257,14 @@ fun MediaScreen(
             // The tabs share the title's line, leaving the height below to the hero.
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Movies & TV", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 18.dp))
+                // First on the line: one Left from the tabs, where the page opens.
+                ActionPill(
+                    Icons.Search, null, accent, shelvesActive, searchFocus,
+                    modifier = Modifier.padding(end = 8.dp), description = "Search",
+                ) {
+                    search.reset(when (kind) { null -> SearchScope.All; MediaKind.Movie -> SearchScope.Movies; MediaKind.Tv -> SearchScope.Tv })
+                    searchOpen = true
+                }
             Row(
                 Modifier
                     .weight(1f)
@@ -281,13 +290,6 @@ fun MediaScreen(
                     }
                 }
             }
-                ActionPill(
-                    Icons.Search, null, accent, shelvesActive, searchFocus,
-                    modifier = Modifier.padding(end = 8.dp), description = "Search",
-                ) {
-                    search.reset(when (kind) { null -> SearchScope.All; MediaKind.Movie -> SearchScope.Movies; MediaKind.Tv -> SearchScope.Tv })
-                    searchOpen = true
-                }
                 ActionPill(
                     Icons.Person, session?.username ?: "Sign in", accent, shelvesActive, accountFocus,
                     modifier = Modifier.padding(end = 18.dp), description = "TMDB account",
@@ -320,8 +322,25 @@ fun MediaScreen(
                             }
                             if (row.titles.isEmpty()) {
                                 SkeletonPosterRow(rememberPulse(), modifier = Modifier.weight(1f).padding(horizontal = 6.dp, vertical = 8.dp))
-                            } else LazyRow(
-                                Modifier.weight(1f),
+                            } else {
+                            val rowState = remember(tab, row.id) { LazyListState() }
+                            LazyRow(
+                                Modifier
+                                    .weight(1f)
+                                    // Up or Down onto a shelf lands on its leftmost title in view. Left to itself,
+                                    // focus goes to the title nearest the middle of the one it left, which under a
+                                    // wide Continue card is the second poster.
+                                    .focusProperties {
+                                        onEnter = {
+                                            if (requestedFocusDirection == FocusDirection.Down || requestedFocusDirection == FocusDirection.Up) {
+                                                val seen = rowState.layoutInfo.visibleItemsInfo
+                                                val first = seen.firstOrNull { it.offset >= 0 } ?: seen.firstOrNull()
+                                                row.titles.getOrNull(first?.index ?: 0)?.let { requester(key(tab, row.id, it)).requestFocus() }
+                                            }
+                                        }
+                                    }
+                                    .focusGroup(),
+                                state = rowState,
                                 // Room for a focused poster to grow without being clipped.
                                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -341,6 +360,7 @@ fun MediaScreen(
                                     }
                                 }
                             }
+                            }
                         }
                     }
                 }
@@ -353,7 +373,7 @@ fun MediaScreen(
             if (ready) {
                 Icon(if (inTabs) Icons.ChevronDown else Icons.ArrowUp, null, tint = Palette.Muted, modifier = Modifier.size(14.dp))
                 Text(
-                    if (inTabs) "Down: titles" else "Up: Home, Movies, TV, search, account",
+                    if (inTabs) "Down: titles" else "Up: search, Home, Movies, TV, account",
                     fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Palette.Muted, modifier = Modifier.padding(start = 4.dp, end = 16.dp),
                 )
             }
