@@ -206,6 +206,9 @@ fun MediaScreen(
             tab = 0
         }
     }
+    // Shared by the tabs, so another tab opens back at its first shelf rather than as far down as the last one was.
+    val shelfScroll = rememberScrollState()
+    LaunchedEffect(tab, active) { shelfScroll.scrollTo(0) }
     LaunchedEffect(accountOpen && active) { if (accountOpen && active) account.startSignIn() else account.stopSignIn() }
 
     val shelvesActive = active && opened.isEmpty() && !accountOpen && !searchOpen
@@ -307,7 +310,7 @@ fun MediaScreen(
                 val rowScrolling = LocalBringIntoViewSpec.current
                 val pivot = with(LocalDensity.current) { remember(this) { ShelfPivot(SHELF_PIVOT.toPx()) } }
                 CompositionLocalProvider(LocalBringIntoViewSpec provides pivot) {
-                Column(Modifier.padding(top = 20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.padding(top = 20.dp).verticalScroll(shelfScroll), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 CompositionLocalProvider(LocalBringIntoViewSpec provides rowScrolling) {
                     rows.forEach { row ->
                         RowCard(live = false, verticalAlignment = Alignment.Top, padding = PaddingValues(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
