@@ -1,5 +1,6 @@
 package app.couchcommander.ui.media
 
+import android.view.KeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -45,6 +46,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -64,6 +66,7 @@ import app.couchcommander.data.media.Shelf
 import app.couchcommander.data.media.Shelves
 import app.couchcommander.player.VodPlayerActivity
 import app.couchcommander.ui.Icons
+import app.couchcommander.ui.home.confirmKeys
 import app.couchcommander.ui.page.ActionPill
 import app.couchcommander.ui.page.RowCard
 import app.couchcommander.ui.page.TabPill
@@ -168,6 +171,9 @@ fun MediaScreen(
             if (play != null) VodPlayerActivity.start(context, play) else opened = listOf(left.title)
         }
     }
+    // A Continue card's page was opened by holding OK, which is still down: its repeats and release are kept from
+    // the page, so they don't press Play there.
+    var okHeld by remember { mutableStateOf(false) }
     // Where focus was on the shelves, to go back to when the last page closes.
     val posterFocus = remember { HashMap<String, FocusRequester>() }
     fun requester(key: String) = posterFocus.getOrPut(key) { FocusRequester() }
@@ -223,7 +229,23 @@ fun MediaScreen(
         runCatching { target.requestFocus() }.onFailure { runCatching { tabFocus[tab].requestFocus() } }
     }
 
-    Box(Modifier.fillMaxSize().background(Palette.Ground)) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Palette.Ground)
+            .onPreviewKeyEvent { e ->
+                val k = e.nativeKeyEvent
+                if (!okHeld || k.keyCode !in confirmKeys) return@onPreviewKeyEvent false
+                if (k.action == KeyEvent.ACTION_DOWN && k.repeatCount == 0) {
+                    // A fresh press: the hold has ended without its release reaching here.
+                    okHeld = false
+                    false
+                } else {
+                    if (k.action == KeyEvent.ACTION_UP) okHeld = false
+                    true
+                }
+            },
+    ) {
         Deferred { HeroBackdrop(hero.value, media, trailers = shelvesActive, fallback = backdrop) }
 
         // The bottom padding keeps the shelves clear of the footer's hints.
@@ -305,7 +327,10 @@ fun MediaScreen(
                                     val k = key(tab, row.id, title)
                                     val left = row.continued[title.ref]
                                     if (left != null) {
-                                        ContinueTile(left, shelvesActive, requester(k), onFocused = { lastPoster = k; hovered.value = title }) { resume(left) }
+                                        ContinueTile(left, shelvesActive, requester(k), onFocused = { lastPoster = k; hovered.value = title }, onLongClick = {
+                                            okHeld = true
+                                            opened = listOf(title)
+                                        }) { resume(left) }
                                     } else {
                                         PosterTile(title, shelvesActive, requester(k), onFocused = { lastPoster = k; hovered.value = title }) {
                                             opened = listOf(title)

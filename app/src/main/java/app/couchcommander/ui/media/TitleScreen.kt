@@ -87,6 +87,7 @@ import app.media.Seasons
 import app.media.TitleExtras
 import java.time.LocalDate
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 
@@ -358,6 +359,18 @@ fun TitleScreen(
                                     }
                                 }
                             }
+                        }
+                    }
+                    if (watching != null) {
+                        // Both take it off Continue for now: nothing records what was watched yet. Focus goes
+                        // to the first button first, as these two leave with it.
+                        fun forget() {
+                            runCatching { first.requestFocus() }
+                            scope.launch(Dispatchers.IO) { container.played.remove(title) }
+                        }
+                        Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            ActionPill(null, "Reset progress", accent, active && !trailerOpen && !rating, focus = null) { forget() }
+                            ActionPill(Icons.Check, "Mark watched", accent, active && !trailerOpen && !rating, focus = null) { forget() }
                         }
                     }
                     if (canPlay && labels.size > 1) {

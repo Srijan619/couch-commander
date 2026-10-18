@@ -1,5 +1,6 @@
 package app.couchcommander.ui.media
 
+import android.view.KeyEvent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,8 +21,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,11 +35,13 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.couchcommander.LauncherApp
 import app.couchcommander.data.media.Watching
+import app.couchcommander.ui.home.confirmKeys
 import app.couchcommander.ui.theme.Palette
 import app.media.MovieDetails
 
@@ -115,7 +121,7 @@ fun PosterTile(
 
 /**
  * A title on Continue: its still, wide, with its name, what's left ("S1 E3 · 42 min left") and a bar showing how
- * far in it was left. Grows and takes a white edge while focused, like a poster.
+ * far in it was left. Grows and takes a white edge while focused, like a poster. Holding OK calls [onLongClick].
  */
 @Composable
 fun ContinueTile(
@@ -123,6 +129,7 @@ fun ContinueTile(
     active: Boolean,
     focus: FocusRequester?,
     onFocused: () -> Unit,
+    onLongClick: () -> Unit,
     onClick: () -> Unit,
 ) {
     val title = watching.title
@@ -135,6 +142,8 @@ fun ContinueTile(
         if (watching.season != null && watching.episode != null) "S${watching.season} E${watching.episode}" else null,
         timeLeft(watching),
     ).joinToString(" · ")
+    // OK is handled here, ahead of clickable, to tell a press from a hold; clickable stays for touch and semantics.
+    var longFired by remember { mutableStateOf(false) }
     Box(
         Modifier
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
@@ -143,8 +152,29 @@ fun ContinueTile(
             .background(PosterGrounds[Math.floorMod(title.title.hashCode(), PosterGrounds.size)])
             .then(if (focused) Modifier.border(2.dp, Palette.White, shape) else Modifier)
             .focusProperties { canFocus = active }
+            .onPreviewKeyEvent { e ->
+                val k = e.nativeKeyEvent
+                if (k.keyCode !in confirmKeys) return@onPreviewKeyEvent false
+                when (k.action) {
+                    KeyEvent.ACTION_DOWN -> {
+                        if (k.repeatCount == 0) longFired = false
+                        else if (!longFired && (k.isLongPress || k.eventTime - k.downTime >= LONG_PRESS_MS)) {
+                            longFired = true
+                            onLongClick()
+                        }
+                    }
+                    KeyEvent.ACTION_UP -> {
+                        if (!longFired) onClick()
+                        longFired = false
+                    }
+                }
+                true
+            }
             .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = "${title.title}, $line" }
+            .semantics {
+                contentDescription = "${title.title}, $line"
+                onLongClick("Details") { onLongClick(); true }
+            }
             .size(CONTINUE_WIDTH, CONTINUE_HEIGHT),
     ) {
         still?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
@@ -160,6 +190,9 @@ fun ContinueTile(
         }
     }
 }
+
+/** Holding OK this long on a Continue card opens its page, as long as a hold on the home row's tiles. */
+private const val LONG_PRESS_MS = 600L
 
 /** "1 h 12 min left", "42 min left"; null before the length is known. */
 private fun timeLeft(w: Watching): String? {
