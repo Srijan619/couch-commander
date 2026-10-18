@@ -42,6 +42,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusDirection
@@ -161,10 +163,12 @@ fun SearchScreen(
         if (target == null || runCatching { target.requestFocus() }.isFailure) runCatching { field.requestFocus() }
     }
 
-    Box(Modifier.fillMaxSize().background(Palette.Ground)) {
-        Deferred { HeroBackdrop(hero.value, media, trailers = active && inResults, fallback = backdrop) }
+    // The page hides around the hero's trailer while nobody presses a key.
+    val immersion = rememberImmersion()
+    Box(Modifier.fillMaxSize().background(Palette.Ground).onPreviewKeyEvent(immersion::onKey)) {
+        Deferred { HeroBackdrop(hero.value, media, trailers = active && inResults, fallback = backdrop, immersion = immersion) }
 
-        Column(Modifier.fillMaxSize().padding(start = 48.dp, end = 48.dp, top = 30.dp, bottom = FOOTER_SPACE)) {
+        Column(Modifier.fillMaxSize().graphicsLayer { alpha = immersion.shown.value }.padding(start = 48.dp, end = 48.dp, top = 30.dp, bottom = FOOTER_SPACE)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Search", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 18.dp))
                 Row(
@@ -282,7 +286,7 @@ fun SearchScreen(
             }
         }
 
-        Row(Modifier.align(Alignment.BottomStart).padding(start = 48.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.align(Alignment.BottomStart).graphicsLayer { alpha = immersion.shown.value }.padding(start = 48.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(if (fieldFocused) Icons.ChevronDown else Icons.ArrowUp, null, tint = Palette.Muted, modifier = Modifier.size(14.dp))
             Text(
                 if (fieldFocused) "Down: results · Up: All, Movies, TV, People" else "Up: search",
@@ -292,7 +296,7 @@ fun SearchScreen(
         }
         Text(
             "Data: TMDB", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Palette.Muted,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 48.dp, bottom = 18.dp),
+            modifier = Modifier.align(Alignment.BottomEnd).graphicsLayer { alpha = immersion.shown.value }.padding(end = 48.dp, bottom = 18.dp),
         )
     }
 }

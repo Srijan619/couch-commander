@@ -36,6 +36,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -49,6 +50,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -125,6 +127,8 @@ fun MediaScreen(
     val myFilms by account.lists(MediaKind.Movie).collectAsStateWithLifecycle()
     val mySeries by account.lists(MediaKind.Tv).collectAsStateWithLifecycle()
     val lately by played.all.collectAsStateWithLifecycle()
+    // Searches, Continue's plays and fetching more of a shelf.
+    val searchScope = rememberCoroutineScope()
     // Home: what was played, the account's lists and what's trending, films and series together. Movies and TV:
     // the account's lists, then TMDB's. Empty ones left out; one not fetched yet stays as a placeholder, so the
     // shelves below don't move down when it arrives.
@@ -143,9 +147,18 @@ fun MediaScreen(
         if (session != null) TmdbAccount.SHELVES.forEach {
             add(ShelfRow(it.name, it.title, it.note, pick(myFilms[it].orEmpty(), mySeries[it].orEmpty()), loading = pending(it !in myFilms, it !in mySeries)))
         }
-        val shelves = if (kind == null) listOf(Shelf.Trending) else Shelf.entries
-        shelves.forEach {
-            add(ShelfRow(it.name, it.title, it.note, pick(movies.rows[it].orEmpty(), tv.rows[it].orEmpty()), loading = pending(movies.fetchedAt == null, tv.fetchedAt == null)))
+        val shelves = if (kind == null) listOf(Shelf.Trending) else Shelf.of(kind)
+        shelves.forEach { shelf ->
+            // Home's Trending grows both kinds together, so films and series keep taking turns.
+            val grow = listOfNotNull(MediaKind.Movie.takeIf { kind != MediaKind.Tv && movies.canGrow(shelf) }, MediaKind.Tv.takeIf { kind != MediaKind.Movie && tv.canGrow(shelf) })
+            add(
+                ShelfRow(
+                    shelf.name, shelf.title, shelf.note, pick(movies.rows[shelf].orEmpty(), tv.rows[shelf].orEmpty()),
+                    loading = pending(movies.fetchedAt == null, tv.fetchedAt == null),
+                    growing = pending(shelf in movies.busy, shelf in tv.busy),
+                    more = if (grow.isEmpty()) null else { -> grow.forEach { k -> searchScope.launch { media.more(k, shelf) } } },
+                ),
+            )
         }
     }.filter { it.titles.isNotEmpty() || it.loading }
     // Some shelf has a title to show (and to focus); until then the hero says what's coming.
@@ -154,7 +167,6 @@ fun MediaScreen(
     val accountFocus = remember { FocusRequester() }
     // Closing the panel puts focus back on the pill, not on the shelves.
     var backToAccount by remember { mutableStateOf(false) }
-    val searchScope = rememberCoroutineScope()
     val search = remember(media) { MediaSearch(searchScope, media::search, media::person) }
     var searchOpen by remember { mutableStateOf(false) }
     val searchFocus = remember { FocusRequester() }
@@ -213,6 +225,8 @@ fun MediaScreen(
     LaunchedEffect(accountOpen && active) { if (accountOpen && active) account.startSignIn() else account.stopSignIn() }
 
     val shelvesActive = active && opened.isEmpty() && !accountOpen && !searchOpen
+    // The page hides around the hero's trailer while nobody presses a key.
+    val immersion = rememberImmersion()
     // The search has its own Back while it's on top.
     BackHandler(enabled = active && opened.isEmpty() && !searchOpen, onBack = onClose)
     BackHandler(enabled = active && opened.isNotEmpty()) { opened = opened.dropLast(1) }
@@ -238,6 +252,7 @@ fun MediaScreen(
             .fillMaxSize()
             .background(Palette.Ground)
             .onPreviewKeyEvent { e ->
+                if (immersion.onKey(e)) return@onPreviewKeyEvent true
                 val k = e.nativeKeyEvent
                 if (!okHeld || k.keyCode !in confirmKeys) return@onPreviewKeyEvent false
                 if (k.action == KeyEvent.ACTION_DOWN && k.repeatCount == 0) {
@@ -250,10 +265,10 @@ fun MediaScreen(
                 }
             },
     ) {
-        Deferred { HeroBackdrop(hero.value, media, trailers = shelvesActive, fallback = backdrop) }
+        Deferred { HeroBackdrop(hero.value, media, trailers = shelvesActive, fallback = backdrop, immersion = immersion) }
 
         // The bottom padding keeps the shelves clear of the footer's hints.
-        Column(Modifier.fillMaxSize().padding(start = 48.dp, end = 48.dp, top = 30.dp, bottom = FOOTER_SPACE)) {
+        Column(Modifier.fillMaxSize().graphicsLayer { alpha = immersion.shown.value }.padding(start = 48.dp, end = 48.dp, top = 30.dp, bottom = FOOTER_SPACE)) {
             // The tabs share the title's line, leaving the height below to the hero.
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Movies & TV", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 18.dp))
@@ -310,14 +325,18 @@ fun MediaScreen(
                 // Moving to another shelf scrolls it to the top, so every Up or Down moves the shelves the same
                 // amount; the posters' own rows scroll as usual.
                 val rowScrolling = LocalBringIntoViewSpec.current
-                val pivot = with(LocalDensity.current) { remember(this) { ShelfPivot(SHELF_PIVOT.toPx()) } }
+                // Still while something covers them: opening a title moved them up a shelf behind it, and closing it
+                // scrolled them back down in view.
+                val covered by rememberUpdatedState(!shelvesActive)
+                val pivot = with(LocalDensity.current) { remember(this) { ShelfPivot(SHELF_PIVOT.toPx()) { covered } } }
                 val justInView = with(LocalDensity.current) { remember(this) { JustInView(CARD_MARGIN.toPx()) } }
                 CompositionLocalProvider(LocalBringIntoViewSpec provides pivot) {
                 Column(Modifier.padding(top = 20.dp).verticalScroll(shelfScroll), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 CompositionLocalProvider(LocalBringIntoViewSpec provides rowScrolling) {
                     rows.forEach { row ->
                         RowCard(live = false, verticalAlignment = Alignment.Top, padding = PaddingValues(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
-                            Column(Modifier.width(96.dp).padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            // Wide enough for the longest name, "Documentary", on one line.
+                            Column(Modifier.width(112.dp).padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(row.title, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 2)
                                 Text(row.note, fontSize = 11.sp, color = Palette.Muted, maxLines = 1)
                             }
@@ -325,6 +344,12 @@ fun MediaScreen(
                                 SkeletonPosterRow(rememberPulse(), modifier = Modifier.weight(1f).padding(horizontal = 6.dp, vertical = 8.dp))
                             } else {
                             val rowState = remember(tab, row.id) { LazyListState() }
+                            // A few titles from the end, the next page is fetched, so it's usually in before the end.
+                            val more by rememberUpdatedState(row.more)
+                            LaunchedEffect(rowState) {
+                                snapshotFlow { rowState.layoutInfo.let { it.totalItemsCount - (it.visibleItemsInfo.lastOrNull()?.index ?: 0) } }
+                                    .collect { left -> if (left <= GROW_WHEN_LEFT) more?.invoke() }
+                            }
                             // Continue's wide cards nearly all fit: its row moves only to show one in full, not to put
                             // the focused card a third of the way in, which cut the one before it in half.
                             CompositionLocalProvider(LocalBringIntoViewSpec provides if (row.continued.isEmpty()) rowScrolling else justInView) {
@@ -339,6 +364,7 @@ fun MediaScreen(
                                             if (requestedFocusDirection == FocusDirection.Down || requestedFocusDirection == FocusDirection.Up) {
                                                 val seen = rowState.layoutInfo.visibleItemsInfo
                                                 val first = seen.firstOrNull { it.offset >= 0 } ?: seen.firstOrNull()
+                                                android.util.Log.d("CCDBG", "enter ${row.id} dir=$requestedFocusDirection seen=${seen.map { it.index to it.offset }} first=${first?.index}")
                                                 row.titles.getOrNull(first?.index ?: 0)?.let { requester(key(tab, row.id, it)).requestFocus() }
                                             }
                                         }
@@ -363,6 +389,7 @@ fun MediaScreen(
                                         }
                                     }
                                 }
+                                if (row.growing) items(GROWING_PLACEHOLDERS) { SkeletonPoster(rememberPulse()) }
                             }
                             }
                             }
@@ -374,7 +401,7 @@ fun MediaScreen(
             }
         }
 
-        Row(Modifier.align(Alignment.BottomStart).padding(start = 48.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.align(Alignment.BottomStart).graphicsLayer { alpha = immersion.shown.value }.padding(start = 48.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
             if (ready) {
                 Icon(if (inTabs) Icons.ChevronDown else Icons.ArrowUp, null, tint = Palette.Muted, modifier = Modifier.size(14.dp))
                 Text(
@@ -387,7 +414,7 @@ fun MediaScreen(
         }
         Text(
             "Data: TMDB", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Palette.Muted,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 48.dp, bottom = 18.dp),
+            modifier = Modifier.align(Alignment.BottomEnd).graphicsLayer { alpha = immersion.shown.value }.padding(end = 48.dp, bottom = 18.dp),
         )
 
         if (searchOpen && active) {
@@ -444,6 +471,10 @@ private class ShelfRow(
     val continued: Map<String, Watching> = emptyMap(),
     /** Not fetched yet: placeholders hold its place while [titles] is empty. */
     val loading: Boolean = false,
+    /** Getting its next page: placeholders follow its last title. */
+    val growing: Boolean = false,
+    /** Fetches its next page; null when there's no more, or one is on its way. */
+    val more: (() -> Unit)? = null,
 )
 
 private val AccountList.title get() = if (this == AccountList.Favorites) "Favourites" else name
@@ -467,6 +498,11 @@ private val MovieDetails.ref get() = "${kind.name}/$id"
 private fun mix(films: List<MovieDetails>, series: List<MovieDetails>): List<MovieDetails> =
     (0 until maxOf(films.size, series.size)).flatMap { listOfNotNull(films.getOrNull(it), series.getOrNull(it)) }
 
+/** Titles still to the right of the last one in view when a shelf fetches its next page. */
+private const val GROW_WHEN_LEFT = 6
+/** Posters standing in for a shelf's next page while it comes. */
+private const val GROWING_PLACEHOLDERS = 3
+
 /** How long focus stays on a poster before the hero changes to it. */
 private const val HERO_SETTLE_MS = 250L
 /** Room under the content for the footer's hints (at 18 dp from the bottom). */
@@ -486,7 +522,8 @@ private class JustInView(private val marginPx: Float) : BringIntoViewSpec {
     }
 }
 
-/** Scrolls whatever takes focus to [pivotPx] below the top, not just into view. */
-private class ShelfPivot(private val pivotPx: Float) : BringIntoViewSpec {
-    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = offset - pivotPx
+/** Scrolls whatever takes focus to [pivotPx] below the top, not just into view; not at all while [frozen]. */
+private class ShelfPivot(private val pivotPx: Float, private val frozen: () -> Boolean) : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
+        if (frozen()) 0f else offset - pivotPx
 }

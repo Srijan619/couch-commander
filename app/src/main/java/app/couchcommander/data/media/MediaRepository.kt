@@ -4,6 +4,7 @@ import app.media.Episode
 import app.media.MediaKind
 import app.media.MovieCache
 import app.media.MovieDetails
+import app.media.MoviePage
 import app.media.MovieRepository
 import app.media.MovieSort
 import app.media.PersonDetails
@@ -22,22 +23,69 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-/** The rows of the Movies and TV pages, in order. */
-enum class Shelf(val title: String, val note: String) {
+/**
+ * The rows of the Movies and TV pages, in order: TMDB's lists, then genres. A genre has TMDB's id for films and for
+ * series (they differ, as for sci-fi); null leaves it off that page.
+ */
+enum class Shelf(
+    val title: String,
+    val note: String,
+    private val movieGenre: Int? = null,
+    private val tvGenre: Int? = null,
+    /** A genre left out, the same id for films and series. */
+    val without: Int? = null,
+) {
     Trending("Trending", "This week"),
     TopRated("Top rated", "All time"),
     Newest("New", "Latest releases"),
+    Action("Action", "Popular", movieGenre = 28, tvGenre = 10759),
+    Comedy("Comedy", "Popular", movieGenre = 35, tvGenre = 35),
+    Drama("Drama", "Popular", movieGenre = 18, tvGenre = 18),
+    Crime("Crime", "Popular", movieGenre = 80, tvGenre = 80),
+    SciFi("Sci-fi", "Popular", movieGenre = 878, tvGenre = 10765),
+    Thriller("Thriller", "Popular", movieGenre = 53),
+    Mystery("Mystery", "Popular", tvGenre = 9648),
+    Horror("Horror", "Popular", movieGenre = 27),
+    Animation("Animation", "Popular", movieGenre = 16, tvGenre = 16),
+    // Most animation is tagged Family too: without it, the two shelves would start with the same titles.
+    LiveFamily("Family", "Live action", movieGenre = 10751, tvGenre = 10751, without = 16),
+    Documentary("Documentary", "Popular", movieGenre = 99, tvGenre = 99);
+
+    val isGenre: Boolean get() = movieGenre != null || tvGenre != null
+
+    /** TMDB's genre id for [kind]; null for the lists, which aren't genres. */
+    fun genre(kind: MediaKind): Int? = if (kind == MediaKind.Movie) movieGenre else tvGenre
+
+    /** On [kind]'s page: every list, and the genres it has. */
+    fun on(kind: MediaKind): Boolean = !isGenre || genre(kind) != null
+
+    companion object {
+        fun of(kind: MediaKind): List<Shelf> = entries.filter { it.on(kind) }
+    }
 }
 
-/** One page's shelves as of [fetchedAt]; empty until the first fetch (or a cached one) is in. */
-data class Shelves(val rows: Map<Shelf, List<MovieDetails>> = emptyMap(), val fetchedAt: Instant? = null) {
+/**
+ * One page's shelves as of [fetchedAt]; empty until the first fetch (or a cached one) is in. A shelf grows a page at
+ * a time from the first: [pages] says how many it has, [ended] the ones with no more, [busy] those getting one.
+ */
+data class Shelves(
+    val rows: Map<Shelf, List<MovieDetails>> = emptyMap(),
+    val fetchedAt: Instant? = null,
+    val pages: Map<Shelf, Int> = emptyMap(),
+    val ended: Set<Shelf> = emptySet(),
+    val busy: Set<Shelf> = emptySet(),
+) {
     val isEmpty: Boolean get() = rows.values.all { it.isEmpty() }
+
+    /** Has more titles to fetch, and isn't fetching them already. */
+    fun canGrow(shelf: Shelf): Boolean = !rows[shelf].isNullOrEmpty() && shelf !in ended && shelf !in busy
 }
 
 /**
@@ -67,24 +115,59 @@ class MediaRepository(private val dir: File, client: HttpClient, baseUrl: String
     suspend fun refresh(kind: MediaKind, now: Instant, force: Boolean = false) = refreshing.getValue(kind).withLock {
         val state = states.getValue(kind)
         val at = state.value.fetchedAt
-        if (!force && at != null && Duration.between(at, now) < MAX_AGE && !state.value.isEmpty) return@withLock
-        val repo = repos.getValue(kind)
+        // A shelf missing from the file (one added since it was written) is fetched without waiting for the rest to age.
+        val complete = Shelf.of(kind).all { it in state.value.rows }
+        if (!force && at != null && Duration.between(at, now) < MAX_AGE && complete) return@withLock
+        val shelves = Shelf.of(kind)
         val pages = coroutineScope {
-            Shelf.entries.associateWith { shelf ->
-                async {
-                    when (shelf) {
-                        Shelf.Trending -> repo.trending(1)
-                        Shelf.TopRated -> repo.page(MovieSort.TopRated, 1)
-                        Shelf.Newest -> repo.page(MovieSort.Newest, 1)
-                    }
-                }
-            }.mapValues { it.value.await() }
+            shelves.associateWith { shelf -> async { fetch(kind, shelf, 1) } }.mapValues { it.value.await() }
         }
         if (pages.values.all { it == null }) return@withLock // offline: keep what's there, try again next time
-        val rows = Shelf.entries.associateWith { shelf -> pages[shelf]?.movies ?: state.value.rows[shelf].orEmpty() }
-        val next = Shelves(rows, now)
+        // A shelf that failed keeps what it had; one that never came stays missing, to be asked for next time.
+        val rows = shelves.mapNotNull { shelf -> (pages[shelf]?.movies ?: state.value.rows[shelf])?.let { shelf to it } }.toMap()
+        // Back to each shelf's first page: what was paged in beyond it is dropped with the old titles.
+        val next = Shelves(rows, now, ended = shelves.filter { pages[it]?.hasMore == false }.toSet())
         state.value = next
         withContext(Dispatchers.IO) { write(kind, next) }
+    }
+
+    /**
+     * Adds [shelf]'s next page of [kind] to its end, leaving out titles it already has. Does nothing while one is on
+     * its way or after the last; a page that fails can be asked for again.
+     */
+    suspend fun more(kind: MediaKind, shelf: Shelf) {
+        val state = states.getValue(kind)
+        val start = state.value
+        if (!shelf.on(kind) || !start.canGrow(shelf)) return
+        val page = (start.pages[shelf] ?: 1) + 1
+        state.update { it.copy(busy = it.busy + shelf) }
+        val got = try {
+            fetch(kind, shelf, page)
+        } finally {
+            state.update { it.copy(busy = it.busy - shelf) }
+        }
+        got ?: return
+        state.update { now ->
+            // A refresh in the meantime started the shelf over; this page no longer follows on from it.
+            if (now.fetchedAt != start.fetchedAt) return@update now
+            val have = now.rows[shelf].orEmpty()
+            val seen = have.mapTo(HashSet()) { it.id }
+            now.copy(
+                rows = now.rows + (shelf to have + got.movies.filter { it.id !in seen }),
+                pages = now.pages + (shelf to page),
+                ended = if (got.hasMore) now.ended else now.ended + shelf,
+            )
+        }
+    }
+
+    private suspend fun fetch(kind: MediaKind, shelf: Shelf, page: Int): MoviePage? {
+        val repo = repos.getValue(kind)
+        return when (shelf) {
+            Shelf.Trending -> repo.trending(page)
+            Shelf.TopRated -> repo.page(MovieSort.TopRated, page)
+            Shelf.Newest -> repo.page(MovieSort.Newest, page)
+            else -> shelf.genre(kind)?.let { repo.genre(it, page, withoutGenre = shelf.without) }
+        }
     }
 
     /** What's already in memory for [title], without asking: lets a page open on it instead of a placeholder. */
@@ -127,7 +210,7 @@ class MediaRepository(private val dir: File, client: HttpClient, baseUrl: String
     private fun read(kind: MediaKind): Shelves = runCatching {
         val saved = json.decodeFromString(ShelfFile.serializer(), file(kind).readText())
         Shelves(
-            rows = Shelf.entries.associateWith { saved.rows[it.name].orEmpty() },
+            rows = Shelf.of(kind).mapNotNull { shelf -> saved.rows[shelf.name]?.let { shelf to it } }.toMap(),
             fetchedAt = Instant.ofEpochMilli(saved.fetchedAt),
         )
     }.getOrDefault(Shelves())
