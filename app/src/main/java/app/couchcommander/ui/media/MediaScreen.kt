@@ -34,6 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,6 +68,7 @@ import app.media.AccountList
 import app.media.MediaKind
 import app.media.MovieDetails
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 
 /**
  * Design H: the full-screen page Left on home's "Apps" handle slides in, the football page's mirror. Tabs for
@@ -134,14 +136,21 @@ fun MediaScreen(
     var lastPoster by remember { mutableStateOf<String?>(null) }
     var inTabs by remember { mutableStateOf(false) }
     // The title the hero shows: the focused poster's, a moment after focus lands, so scrolling past doesn't load
-    // every still on the way.
-    var hovered by remember { mutableStateOf<MovieDetails?>(null) }
-    val hero by produceState(hovered, hovered) {
-        delay(HERO_SETTLE_MS)
-        value = hovered
+    // every still on the way. Both are held as State and only read inside the hero's own composables: read here,
+    // every arrow press would recompose the whole page, every shelf and poster (30 ms frames on the TV).
+    val hovered = remember { mutableStateOf<MovieDetails?>(null) }
+    val hero = remember { mutableStateOf<MovieDetails?>(null) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { hovered.value }.collectLatest {
+            if (hero.value != null) delay(HERO_SETTLE_MS)
+            hero.value = it
+        }
     }
     val firstTitle = rows.firstOrNull()?.titles?.first()
-    LaunchedEffect(tab, firstTitle?.id) { if (hovered == null || (kind != null && hovered?.kind != kind)) hovered = firstTitle }
+    LaunchedEffect(tab, firstTitle?.id) {
+        val now = hovered.value
+        if (now == null || (kind != null && now.kind != kind)) hovered.value = firstTitle
+    }
 
     LaunchedEffect(active) {
         if (!active) {
@@ -171,8 +180,7 @@ fun MediaScreen(
     }
 
     Box(Modifier.fillMaxSize().background(Palette.Ground)) {
-        backdrop?.let { Image(it, null, contentScale = ContentScale.Crop, filterQuality = FilterQuality.Low, modifier = Modifier.fillMaxSize()) }
-        HeroBackdrop(hero, media, trailers = shelvesActive)
+        Deferred { HeroBackdrop(hero.value, media, trailers = shelvesActive, fallback = backdrop) }
 
         // The bottom padding keeps the shelves clear of the footer's hints.
         Column(Modifier.fillMaxSize().padding(start = 48.dp, end = 48.dp, top = 30.dp, bottom = FOOTER_SPACE)) {
@@ -210,7 +218,7 @@ fun MediaScreen(
                 ) { accountOpen = true }
                 Text(clock.time, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
-            HeroText(hero, accent, Modifier.padding(top = 4.dp))
+            Deferred { HeroText(hero.value, accent, Modifier.padding(top = 4.dp)) }
 
             if (rows.isEmpty()) {
                 Column(Modifier.padding(top = 36.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -241,9 +249,9 @@ fun MediaScreen(
                                     val k = key(tab, row.id, title)
                                     val left = row.continued[title.ref]
                                     if (left != null) {
-                                        ContinueTile(left, shelvesActive, requester(k), onFocused = { lastPoster = k; hovered = title }) { opened = listOf(title) }
+                                        ContinueTile(left, shelvesActive, requester(k), onFocused = { lastPoster = k; hovered.value = title }) { opened = listOf(title) }
                                     } else {
-                                        PosterTile(title, shelvesActive, requester(k), onFocused = { lastPoster = k; hovered = title }) {
+                                        PosterTile(title, shelvesActive, requester(k), onFocused = { lastPoster = k; hovered.value = title }) {
                                             opened = listOf(title)
                                         }
                                     }
@@ -316,6 +324,13 @@ private val AccountList.title get() = if (this == AccountList.Favorites) "Favour
 private val AccountList.note get() = if (this == AccountList.Favorites) "Yours" else "To watch"
 
 private const val CONTINUE = "Continue"
+
+/**
+ * Its own recompose scope: a State read in [content] recomposes only this, not the caller (a plain lambda passed
+ * to an inline layout like Column would be part of the caller's scope).
+ */
+@Composable
+private fun Deferred(content: @Composable () -> Unit) = content()
 
 private fun key(tab: Int, row: String, title: MovieDetails) = "$tab/$row/${title.ref}"
 

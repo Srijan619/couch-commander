@@ -37,6 +37,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +51,8 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -85,6 +88,7 @@ import app.media.TitleExtras
 import java.time.LocalDate
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 
 /**
  * One film or series, over the shelves: its backdrop, facts, plot, where to watch it in the viewer's country and
@@ -214,15 +218,28 @@ fun TitleScreen(
 
     val today = remember { LocalDate.now() }
     Box(Modifier.fillMaxSize().background(Palette.Ground).onFocusChanged { holdsFocus = it.hasFocus }) {
-        backdrop?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().alpha(0.55f)) }
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.horizontalGradient(0f to Palette.Ground.copy(alpha = 0.95f), 0.55f to Palette.Ground.copy(alpha = 0.7f), 1f to Palette.Ground.copy(alpha = 0.3f)),
-            ),
-        )
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to Palette.Ground.copy(alpha = 0.9f))))
+        // One cached layer: scrolling the page then redraws a single texture, not the still and two fades.
+        Box(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }) {
+            backdrop?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().alpha(0.55f)) }
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.horizontalGradient(0f to Palette.Ground.copy(alpha = 0.95f), 0.55f to Palette.Ground.copy(alpha = 0.7f), 1f to Palette.Ground.copy(alpha = 0.3f)),
+                ),
+            )
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to Palette.Ground.copy(alpha = 0.9f))))
+        }
 
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 48.dp, vertical = 30.dp)) {
+        val scroll = rememberScrollState()
+        // Back on the buttons or the version chips, the whole top shows again: the title, the header. After the
+        // focus system's own bring-into-view scroll, which would cancel one started at the same time.
+        var topFocused by remember(title.id) { mutableStateOf(false) }
+        LaunchedEffect(topFocused) {
+            if (!topFocused) return@LaunchedEffect
+            withFrameNanos { }
+            snapshotFlow { scroll.isScrollInProgress }.first { !it }
+            if (scroll.value > 0) scroll.animateScrollTo(0)
+        }
+        Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 48.dp, vertical = 30.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
                 Text(if (title.kind == MediaKind.Movie) "Movies" else "TV", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Text(
@@ -232,7 +249,12 @@ fun TitleScreen(
                 Text(clock.time, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
 
-            Row(Modifier.padding(top = 22.dp), horizontalArrangement = Arrangement.spacedBy(40.dp)) {
+            Row(
+                Modifier
+                    .padding(top = 22.dp)
+                    .onFocusChanged { topFocused = it.hasFocus },
+                horizontalArrangement = Arrangement.spacedBy(40.dp),
+            ) {
                 Column(
                     Modifier
                         .weight(1f)

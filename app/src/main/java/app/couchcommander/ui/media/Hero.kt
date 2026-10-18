@@ -20,6 +20,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -37,10 +40,13 @@ import kotlinx.coroutines.delay
  * The focused title's still behind the whole page, fading into the ground at the left, the top and the bottom so
  * the words, the clock and the shelves stay readable over it. Once focus has rested on the title for [TRAILER_DELAY_MS], its trailer
  * plays over the still with sound (when [trailers] allows and it has one); it stops as focus moves on or a
- * title's page opens.
+ * title's page opens. [fallback] (home's blurred painting) shows until the first still has loaded.
+ *
+ * The still and its fades are drawn into one cached layer: moving along the shelves then costs the TV's GPU one
+ * full-screen texture, not an image and two gradients redrawn every frame (it was GPU-bound at about 30 fps).
  */
 @Composable
-fun HeroBackdrop(title: MovieDetails?, media: MediaRepository, trailers: Boolean, modifier: Modifier = Modifier) {
+fun HeroBackdrop(title: MovieDetails?, media: MediaRepository, trailers: Boolean, fallback: ImageBitmap? = null, modifier: Modifier = Modifier) {
     val still = rememberRemoteImage(title?.backdropWideUrl ?: title?.backdropUrl, 960.dp)
     val videos by produceState<List<MovieVideo>?>(null, title?.id, trailers) {
         value = null
@@ -49,28 +55,40 @@ fun HeroBackdrop(title: MovieDetails?, media: MediaRepository, trailers: Boolean
         value = media.details(title)?.videos
     }
     val autoplay = rememberAutoplayAllowed()
+    val keys = videos?.map { it.key }.orEmpty()
+    val playing = trailers && autoplay && keys.isNotEmpty()
     Box(modifier.fillMaxSize()) {
-        // Keyed by the image, so a new title's still fades in over the last one.
-        Crossfade(still, animationSpec = tween(400), label = "hero") { image: ImageBitmap? ->
-            image?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
+        Box(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }) {
+            if (still == null) fallback?.let { Image(it, null, contentScale = ContentScale.Crop, filterQuality = FilterQuality.Low, modifier = Modifier.fillMaxSize()) }
+            // Keyed by the image, so a new title's still fades in over the last one.
+            Crossfade(still, animationSpec = tween(400), label = "hero") { image: ImageBitmap? ->
+                image?.let { Image(it, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
+            }
+            if (!playing) Fades()
         }
-        val keys = videos?.map { it.key }.orEmpty()
-        if (trailers && autoplay && keys.isNotEmpty()) {
+        if (playing) {
             // Most trailers are cinema-wide with black bars inside the video: zoomed past them to fill the page.
             TrailerPlayer(keys, playing = true, muted = false, zoom = 1.34f, modifier = Modifier.fillMaxSize())
+            // Over the video, in their own cached layer.
+            Box(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }) { Fades() }
         }
-        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Palette.Ground.copy(alpha = 0.92f), 0.4f to Palette.Ground.copy(alpha = 0.55f), 0.75f to Color.Transparent)))
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    0f to Palette.Ground.copy(alpha = 0.6f),
-                    0.2f to Color.Transparent,
-                    0.45f to Color.Transparent,
-                    0.85f to Palette.Ground.copy(alpha = 0.95f),
-                ),
-            ),
-        )
     }
+}
+
+/** Darkens the left, the top and the bottom so the words, the clock and the shelves stay readable. */
+@Composable
+private fun Fades() {
+    Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Palette.Ground.copy(alpha = 0.92f), 0.4f to Palette.Ground.copy(alpha = 0.55f), 0.75f to Color.Transparent)))
+    Box(
+        Modifier.fillMaxSize().background(
+            Brush.verticalGradient(
+                0f to Palette.Ground.copy(alpha = 0.6f),
+                0.2f to Color.Transparent,
+                0.45f to Color.Transparent,
+                0.85f to Palette.Ground.copy(alpha = 0.95f),
+            ),
+        ),
+    )
 }
 
 /** The focused title's name, facts and the start of its plot, above the shelves; always [HERO_TEXT_HEIGHT] tall. */
