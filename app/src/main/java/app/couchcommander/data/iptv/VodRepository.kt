@@ -30,6 +30,13 @@ data class VodIndex(
     val error: String? = null,
 )
 
+/** What follows an episode: the next one, nothing (the series' last on the panel), or not known (offline). */
+sealed interface NextEpisode {
+    data class Found(val episode: VodEpisode) : NextEpisode
+    data object Last : NextEpisode
+    data object Unknown : NextEpisode
+}
+
 /** How the film and series catalogue stands, for settings and the logs. */
 data class VodStatus(val movies: Int = 0, val series: Int = 0, val syncedAtEpochMillis: Long? = null, val error: String? = null, val syncing: Boolean = false)
 
@@ -45,6 +52,8 @@ class VodRepository(
     private val dispatcher: CoroutineDispatcher = VOD_THREAD,
     /** Lookups: not the sync thread, which can be busy for minutes. */
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** Told how long reading the catalogue from disk and indexing it took, in ms, for the log. */
+    private val onLoaded: (Long) -> Unit = {},
 ) {
     private val file = File(dir, "vod.json")
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -103,6 +112,20 @@ class VodRepository(
         (sure + named).distinctBy { it.id }.sortedBy(VodNames::rank)
     }
 
+    /**
+     * What comes after [streamId] in [series], from the first of the panel's versions that lists it. The episode
+     * lists are cached, so asking again costs nothing.
+     */
+    suspend fun nextEpisode(source: IptvSource?, series: MovieDetails, streamId: String): NextEpisode {
+        for (entry in find(series)) {
+            val eps = episodes(source, entry) ?: continue
+            val at = eps.indexOfFirst { it.id == streamId }
+            if (at >= 0) return eps.getOrNull(at + 1)?.let(NextEpisode::Found) ?: NextEpisode.Last
+        }
+        // Offline, or no version lists this episode any more.
+        return NextEpisode.Unknown
+    }
+
     /** Films and series whose name holds [text], for the adb report; names only, never a URL. */
     suspend fun search(text: String, max: Int = 40): List<VodEntry> = withContext(io) {
         val l = loading.withLock { lookup() } ?: return@withContext emptyList()
@@ -145,9 +168,13 @@ class VodRepository(
         }
     }
 
-    private fun lookup(): Lookup? = lookup ?: runCatching { json.decodeFromString<VodIndex>(file.readText()) }.getOrNull()?.let(::Lookup)?.also {
-        lookup = it
-        _status.value = it.index.status()
+    private fun lookup(): Lookup? = lookup ?: run {
+        val start = System.nanoTime()
+        runCatching { json.decodeFromString<VodIndex>(file.readText()) }.getOrNull()?.let(::Lookup)?.also {
+            lookup = it
+            _status.value = it.index.status()
+            onLoaded((System.nanoTime() - start) / 1_000_000)
+        }
     }
 
     private suspend fun save(next: VodIndex) = withContext(io) {

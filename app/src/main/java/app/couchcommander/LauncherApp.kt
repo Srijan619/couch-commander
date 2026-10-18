@@ -61,7 +61,7 @@ class AppContainer(app: Application) {
     val iptvSource = IptvSourceStore(app.filesDir)
     val iptv = IptvRepository(app.filesDir, newParser = { Xml.newPullParser() })
     /** The panel's films and series, for Play on the Movies and TV page. */
-    val vod = VodRepository(app.filesDir)
+    val vod = VodRepository(app.filesDir, onLoaded = { ms -> android.util.Log.i("Iptv", "vod catalogue loaded in $ms ms") })
     val channelHealth = ChannelHealthStore(app.filesDir)
     val logos = ChannelLogos(app.cacheDir)
     /** The proxy sleeps when idle and can take a minute to answer the first request after. */
