@@ -122,13 +122,13 @@ class IptvRepositoryTest {
     }
 
     @Test
-    fun `xtream asks for sports categories only`() = runTest {
+    fun `xtream keeps sports categories' streams, from one request`() = runTest {
         val dir = Files.createTempDirectory("iptv").toFile()
         val s = IptvSource.Xtream("http://panel:8080", "user", "pa ss")
         val fetch = FakeFetch(
             mapOf(
                 Xtream.categoriesUrl(s) to """[{"category_id":"1","category_name":"UK| SPORTS"},{"category_id":"2","category_name":"UK| NEWS"}]""".toByteArray(),
-                Xtream.streamsUrl(s, "1") to """[{"num":101,"name":"Sky Sports PL","stream_id":55,"epg_channel_id":"skypl.uk"},{"num":102,"name":"EPL 01: Arsenal v Chelsea","stream_id":56}]""".toByteArray(),
+                Xtream.streamsUrl(s) to """[{"num":101,"name":"Sky Sports PL","stream_id":55,"epg_channel_id":"skypl.uk","category_id":"1"},{"num":102,"name":"EPL 01: Arsenal v Chelsea","stream_id":56,"category_id":1},{"num":201,"name":"Arsenal news","stream_id":57,"category_id":"2"}]""".toByteArray(),
             ),
         )
         // No guide on this panel: the event channel named after the match is kept, the plain one isn't stored.
@@ -137,7 +137,8 @@ class IptvRepositoryTest {
         val ch = state.channels.single()
         assertEquals(102, ch.number)
         assertEquals("http://panel:8080/live/user/pa%20ss/56.ts", ch.url)
-        assertEquals(3, fetch.requests.size) // categories, one sports category, the (missing) guide
+        assertEquals("UK| SPORTS", ch.group)
+        assertEquals(3, fetch.requests.size) // categories, all live streams, the (missing) guide
     }
 
     @Test

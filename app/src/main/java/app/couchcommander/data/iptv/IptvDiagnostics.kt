@@ -45,6 +45,21 @@ object IptvDiagnostics {
         return out
     }
 
+    /**
+     * "Why isn't this channel in the Channels tab?": the live streams named [query], from the panel's whole live list,
+     * and whether a sync keeps their category.
+     */
+    fun live(query: String, source: IptvSource?, fetch: IptvFetch): List<String> {
+        if (source !is IptvSource.Xtream) return listOf("live: Xtream panels only")
+        val q = Names.fold(query)
+        val categories = fetch.get(Xtream.categoriesUrl(source), IptvRepository.API_MAX) { Xtream.parseCategories(it.reader().readText()) }
+        val streams = fetch.get(Xtream.streamsUrl(source), IptvRepository.PLAYLIST_MAX) { Xtream.parseStreams(it, source, categories) }
+        val named = streams.filter { Names.fold(it.name).contains(q) }
+        val out = mutableListOf("-- live: ${categories.size} categories (${categories.count { Sports.isSportsCategory(it.name) }} kept as sports), ${streams.size} streams, ${named.size} named '$query'")
+        named.take(MAX_LINES).forEach { out += "stream ${it.name} | ${it.group} | category kept=${Sports.isSportsCategory(it.group)} | brand=${PopularChannels.brand(it)} | quality=${PopularChannels.quality(it)}" }
+        return out
+    }
+
     private fun probe(source: IptvSource, state: IptvState, hit: (String) -> Boolean, fetch: IptvFetch, newParser: () -> XmlPullParser): List<String> {
         val out = mutableListOf<String>()
         val epgUrl = when (source) {
@@ -55,9 +70,7 @@ object IptvDiagnostics {
                     .take(MAX_LINES).forEach { out += "category ${it.name} | kept=${Sports.isSportsCategory(it.name)}" }
                 // Every sports stream with the term in its name, and what the Channels tab makes of it.
                 val sports = categories.filter { Sports.isSportsCategory(it.name) }
-                val streams = sports.flatMap { c ->
-                    runCatching { fetch.get(Xtream.streamsUrl(source, c.id), IptvRepository.API_MAX) { Xtream.parseStreams(it.reader().readText(), source, c) } }.getOrDefault(emptyList())
-                }
+                val streams = fetch.get(Xtream.streamsUrl(source), IptvRepository.PLAYLIST_MAX) { Xtream.parseStreams(it, source, sports) }
                 val named = streams.filter { hit(it.name) }
                 val popularAll = PopularChannels.keep(streams)
                 out += "-- sports streams named it: ${named.size} (of ${streams.size}); Channels tab would keep ${popularAll.size} in all"

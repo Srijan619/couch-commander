@@ -59,6 +59,7 @@ class LeaguePageTest {
         assertEquals(emptyList(), day.matches)
         assertEquals(Instant.parse("2026-10-20T16:45:00Z"), day.next?.kickoff)
         assertEquals(2, day.next?.count)
+        assertEquals(listOf(1L, 2L), day.nextMatches.map { it.id })
         assertNull(LeaguePage.today(emptyList(), now, zone).next)
     }
 }

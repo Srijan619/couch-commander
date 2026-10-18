@@ -100,11 +100,8 @@ class IptvRepository(
         val (channels, epgUrl, size) = when (source) {
             is IptvSource.Xtream -> {
                 val categories = fetch.get(Xtream.categoriesUrl(source), API_MAX) { Xtream.parseCategories(it.reader().readText()) }
-                val sports = categories.filter { Sports.isSportsCategory(it.name) }.take(MAX_CATEGORIES)
-                // Big panels have hundreds of sports categories; one that fails or times out is skipped, not the sync.
-                val streams = sports.flatMap { c ->
-                    runCatching { fetch.get(Xtream.streamsUrl(source, c.id), API_MAX) { Xtream.parseStreams(it.reader().readText(), source, c) } }.getOrDefault(emptyList())
-                }
+                val sports = categories.filter { Sports.isSportsCategory(it.name) }
+                val streams = if (sports.isEmpty()) emptyList() else fetch.get(Xtream.streamsUrl(source), PLAYLIST_MAX) { Xtream.parseStreams(it, source, sports) }
                 if (sports.isNotEmpty() && streams.isEmpty()) throw java.io.IOException("No streams in ${sports.size} sports categories")
                 Triple(streams, Xtream.xmltvUrl(source), streams.size)
             }
@@ -186,12 +183,11 @@ class IptvRepository(
         const val PLAYLIST_MAX = 300_000_000L
         const val GUIDE_MAX = 1_500_000_000L
         const val API_MAX = 30_000_000L
-        const val MAX_CATEGORIES = 1_000
         /** A safety net for memory during a sync, not a filter: big panels have 20 000+ sports streams. */
         const val MAX_CHANNELS = 100_000
         const val MAX_PROGRAMMES = 2_000
-        /** 2: [IptvState.popular]. 3: it keeps HD and SD channels too. */
-        private const val KEY_VERSION = 3
+        /** 2: [IptvState.popular]. 3: it keeps HD and SD channels too. 4: and channels with a bracketed "[LIVE-EVENT]" tag. */
+        private const val KEY_VERSION = 4
         private const val RELAXED = "http://xmlpull.org/v1/doc/features.html#relaxed"
 
         /** One background thread at the lowest priority, so a sync never takes time from the launcher's UI. */

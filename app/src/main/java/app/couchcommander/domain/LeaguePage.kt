@@ -16,6 +16,8 @@ object LeaguePage {
         val firstResult: Int,
         /** Only with nothing today. */
         val next: NextDay?,
+        /** The next match day's matches, by kickoff; only with nothing today. */
+        val nextMatches: List<FootballMatch> = emptyList(),
     )
 
     /** The next match day: its first kickoff and how many matches it has. */
@@ -31,8 +33,9 @@ object LeaguePage {
         val (results, open) = todays.partition { it.finished || !now.isBefore(it.kickoff.plus(MatchTimes.STALE_AFTER)) }
         val ordered = open.sortedWith(compareBy<FootballMatch> { if (it.live) 0 else 1 }.thenBy { it.kickoffEpochMillis }) +
             results.sortedBy { it.kickoffEpochMillis }
-        val next = if (todays.isNotEmpty()) null else played.filter { day(it).isAfter(today) }.minByOrNull { it.kickoffEpochMillis }
-            ?.let { first -> NextDay(first.kickoff, played.count { day(it) == day(first) }) }
-        return Day(ordered, if (results.isEmpty()) -1 else open.size, next)
+        val first = if (todays.isNotEmpty()) null else played.filter { day(it).isAfter(today) }.minByOrNull { it.kickoffEpochMillis }
+        val nextMatches = first?.let { f -> played.filter { day(it) == day(f) }.sortedBy { it.kickoffEpochMillis } }.orEmpty()
+        val next = first?.let { NextDay(it.kickoff, nextMatches.size) }
+        return Day(ordered, if (results.isEmpty()) -1 else open.size, next, nextMatches)
     }
 }

@@ -299,6 +299,8 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
                 popular = iptvState.popular,
                 mostWatched = remember(channelHealth, iptvState) { ChannelHealth.mostWatched(channelHealth, iptvState.popular + iptvState.channels) },
                 onPlayChannel = { attempts -> PlayerActivity.start(context, attempts, null) },
+                onHideChannel = container.channelHealth::hide,
+                onShowHiddenChannels = container.channelHealth::showHidden,
                 onAddPlaylist = { playlistOpen = true },
                 onChooseLeagues = { leaguesOpen = true },
                 health = channelHealth,

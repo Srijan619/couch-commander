@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
  *     adb shell am broadcast -n app.couchcommander/.data.iptv.IptvSourceReceiver -a app.couchcommander.SYNC_IPTV
  *     adb shell am broadcast -n app.couchcommander/.data.iptv.IptvSourceReceiver -a app.couchcommander.CLEAR_IPTV
  *     adb shell am broadcast -n app.couchcommander/.data.iptv.IptvSourceReceiver -a app.couchcommander.DEBUG_IPTV --es q dortmund [--ez probe true]
+ *     adb shell am broadcast -n app.couchcommander/.data.iptv.IptvSourceReceiver -a app.couchcommander.DEBUG_IPTV --es live 'tnt ultimate'
  *     adb shell am broadcast -n app.couchcommander/.data.iptv.IptvSourceReceiver -a app.couchcommander.DEBUG_IPTV --es play sportklub
  *     adb shell am broadcast -n app.couchcommander/.data.iptv.IptvSourceReceiver -a app.couchcommander.DEBUG_IPTV --es vod dune [--ez sync true]
  *
@@ -46,6 +47,15 @@ class IptvSourceReceiver : BroadcastReceiver() {
                         Log.i(TAG, "Playing ${channel.name}")
                         val attempt = WatchAttempt(Names.provider(channel, event = false), channel, event = false)
                         context.startActivity(PlayerActivity.intent(context, listOf(attempt), kickoff = null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                    return
+                }
+                // --es live <name>: the panel's live streams with that in their name, and whether a sync fetches them.
+                intent.getStringExtra("live")?.let { name ->
+                    container.scope.launch(Dispatchers.IO) {
+                        runCatching { IptvDiagnostics.live(name, container.iptvSource.source.value, IptvHttp()) }
+                            .getOrElse { listOf("live failed: ${it.message}") }.forEach { Log.i(TAG, it) }
+                        Log.i(TAG, "-- end of report")
                     }
                     return
                 }

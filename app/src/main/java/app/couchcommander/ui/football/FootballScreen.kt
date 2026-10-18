@@ -32,6 +32,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +54,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -105,7 +109,8 @@ import kotlinx.coroutines.withContext
  * followed teams' matches on now and later today, one row each, with a chip per provider the IPTV sync found it on.
  * Later days and results stay on home. Without a playlist it points to the setting. Back goes home.
  *
- * Design E adds a tab per followed league after "My teams": that league's matches today, and "+" to choose leagues.
+ * Design E adds a tab per followed league after "My teams", and "+" to choose leagues; a league's matches today show
+ * as matchday posters (design L, MatchShelf), and so do the followed teams' on "My teams".
  * With a playlist, "Channels" sits left of "My teams": the big sports brands' channels in 4K, UHD or FHD, to watch
  * whatever is on when no match was found. A tab opens as focus lands on it; Up from the list returns to the open tab.
  */
@@ -133,6 +138,9 @@ fun FootballScreen(
     onWatch: (FootballMatch, List<WatchAttempt>) -> Unit,
     /** A channel from the "Channels" tab, then the same channel's other feeds as fallbacks. */
     onPlayChannel: (List<WatchAttempt>) -> Unit,
+    /** Holding OK on a channel there: hide it from the football page, or bring back every hidden one. */
+    onHideChannel: (IptvChannel) -> Unit = {},
+    onShowHiddenChannels: () -> Unit = {},
     onAddPlaylist: () -> Unit,
     onChooseLeagues: () -> Unit,
     onClose: () -> Unit,
@@ -149,9 +157,6 @@ fun FootballScreen(
     }
     val zone = remember { ZoneId.systemDefault() }
     val today = remember(matches, teams, minute) { FootballPage.today(matches, teams, minute, zone) }
-    val cards = remember(today, minute) {
-        today.matches.mapNotNull { m -> FootballText.lines(FootballBoard(m, emptyList()), minute, zone, is24Hour)?.let { m to it } }
-    }
     val backdrop = rememberBlurred(frame)
     val first = remember { FocusRequester() }
 
@@ -163,8 +168,19 @@ fun FootballScreen(
     val selected = if (tab < 0) mine else tab.coerceAtMost(names.lastIndex)
     val tabFocus = remember(names.size) { List(names.size) { FocusRequester() } }
     val showChannels = hasPlaylist && selected == 0
+    var channelsBuilt by remember { mutableStateOf(false) }
+    LaunchedEffect(showChannels) { if (showChannels) channelsBuilt = true }
     val league = leagues.getOrNull(selected - mine - 1)
+    // The match tab on screen ("mine" or "league-<id>"), and the ones visited this time, kept composed while hidden.
+    val shelfKey = when { showChannels -> null; league == null -> "mine"; else -> "league-${league.id}" }
+    val visitedShelves = remember { mutableStateListOf<String>() }
+    LaunchedEffect(shelfKey) { if (shelfKey != null && shelfKey !in visitedShelves) visitedShelves += shelfKey }
     val day = remember(league, leagueMatches, minute) { league?.let { LeaguePage.today(leagueMatches[it.id].orEmpty(), minute, zone) } }
+    // The Channels tab marks the channels showing any of these, and lists them under "On now" in the tabs' order:
+    // the followed teams', then each league's as its tab comes, by kickoff within each.
+    val allMatches = remember(matches, leagues, leagueMatches) {
+        (matches.sortedBy { it.kickoffEpochMillis } + leagues.flatMap { l -> leagueMatches[l.id].orEmpty().sortedBy { it.kickoffEpochMillis } }).distinctBy { it.id }
+    }
     val followed = remember(teams) { teams.mapTo(mutableSetOf()) { it.id } }
     val home = remember { Names.homeCountry(ZoneId.systemDefault().id, Locale.getDefault().country) }
     // Off the main thread: the player updates the health records, and grouping the playlist's ~1,200 channels again
@@ -179,14 +195,12 @@ fun FootballScreen(
         value = withContext(Dispatchers.Default) { chipsFor(watch, health, home, previous) }
     }
 
-    val firstWatch = cards.indexOfFirst { (m, _) -> !watch[m.id].isNullOrEmpty() }
-    val firstLeagueWatch = day?.matches?.indexOfFirst { !it.finished && !watch[it.id].isNullOrEmpty() } ?: -1
     // Whether the open tab has something to press below the tabs; the footer offers Down only then.
     val hasTarget = when {
         !hasPlaylist -> true
         showChannels -> brands.isNotEmpty() || mostWatched.isNotEmpty()
-        day == null -> firstWatch >= 0
-        else -> firstLeagueWatch >= 0
+        day == null -> today.matches.isNotEmpty() || today.upcoming.isNotEmpty()
+        else -> day.matches.isNotEmpty() || day.nextMatches.isNotEmpty()
     }
     // The footer names the way to the other half: Down to the matches from the tabs, Up to the tabs from the matches.
     var inTabs by remember { mutableStateOf(false) }
@@ -233,49 +247,48 @@ fun FootballScreen(
                 ActionPill(Icons.Plus, null, accent, active, focus = null, modifier = Modifier.padding(start = 6.dp), description = "Choose leagues", onClick = onChooseLeagues)
             }
 
-            if (showChannels) {
-                ChannelsTab(brands, mostWatched, popular, accent, active, first, onPlayChannel)
-            } else if (day == null) {
-                Column(Modifier.padding(top = 18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (cards.isEmpty()) NothingToday(today.next, minute, zone, is24Hour)
-                    cards.forEachIndexed { i, (m, lines) ->
-                        MatchCard(
-                            m, lines, chips[m.id], hasPlaylist, accent, active,
-                            focus = if (i == firstWatch) first else null,
-                            large = cards.size == 1,
-                            onWatch = onWatch,
-                        )
-                    }
-                    if (!hasPlaylist) {
-                        ActionPill(
-                            Icons.ChevronRight, "Add your IPTV playlist to watch here", accent, active,
-                            focus = if (firstWatch < 0) first else null, onClick = onAddPlaylist,
+            // Built on the first visit and then kept, hidden, while another tab is open: built again on every switch
+            // from "My teams", it held one frame for 0.3 s on the TV.
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                if (hasPlaylist && (showChannels || channelsBuilt)) {
+                    Box(Modifier.graphicsLayer { alpha = if (showChannels) 1f else 0f }) {
+                        ChannelsTab(
+                            brands, mostWatched, popular, allMatches, watch, health, minute, zone, is24Hour, accent, active && showChannels, first,
+                            onPlay = onPlayChannel, onHide = onHideChannel, onShowHidden = onShowHiddenChannels,
                         )
                     }
                 }
-            } else {
-                // A full matchday can run past the bottom; focusing a chip scrolls it into view.
-                Column(Modifier.padding(top = 18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (day.matches.isEmpty()) NothingInLeague(day.next, minute, zone, is24Hour)
-                    day.matches.forEachIndexed { i, m ->
-                        if (i == day.firstResult) {
-                            Text(
-                                "EARLIER TODAY", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp, color = Palette.Muted,
-                                modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
-                            )
+                // Likewise each match tab's shelf: built again on every switch, "My teams" held a frame for 0.1 s.
+                (visitedShelves + listOfNotNull(shelfKey)).distinct().forEach { k ->
+                    key(k) {
+                        val shown = k == shelfKey
+                        val focusable = rememberUpdatedState(active && shown)
+                        Column(Modifier.graphicsLayer { alpha = if (shown) 1f else 0f }) {
+                            val shelfLeague = leagues.firstOrNull { "league-${it.id}" == k }
+                            if (shelfLeague == null) {
+                                MatchShelf(
+                                    k, today.matches, firstResult = -1, today.upcoming, "No matches today",
+                                    today.next?.let { "Next: ${dayName(it.kickoff, minute, zone)}" },
+                                    followed = emptySet(), chips, hasPlaylist, minute, zone, is24Hour, accent, active, focusable, onWatch,
+                                )
+                            } else {
+                                val leagueDay = remember(shelfLeague, leagueMatches, minute) { LeaguePage.today(leagueMatches[shelfLeague.id].orEmpty(), minute, zone) }
+                                val next = leagueDay.next?.let { n ->
+                                    val time = FootballBoards.timeLabel(n.kickoff, zone, is24Hour)
+                                    "Next: ${dayName(n.kickoff, minute, zone)} · " + if (n.count == 1) "1 match at $time" else "${n.count} matches from $time"
+                                }
+                                MatchShelf(
+                                    k, leagueDay.matches, leagueDay.firstResult, leagueDay.nextMatches, "No ${shelfLeague.name} today", next,
+                                    followed, chips, hasPlaylist, minute, zone, is24Hour, accent, active, focusable, onWatch,
+                                )
+                            }
+                            if (shown && !hasPlaylist) {
+                                ActionPill(
+                                    Icons.ChevronRight, "Add your IPTV playlist to watch here", accent, active,
+                                    focus = first, modifier = Modifier.padding(top = 18.dp), onClick = onAddPlaylist,
+                                )
+                            }
                         }
-                        LeagueRow(
-                            m, result = i >= day.firstResult && day.firstResult >= 0, followed, chips[m.id], hasPlaylist,
-                            minute, zone, is24Hour, accent, active,
-                            focus = if (i == firstLeagueWatch) first else null,
-                            onWatch = onWatch,
-                        )
-                    }
-                    if (!hasPlaylist) {
-                        ActionPill(
-                            Icons.ChevronRight, "Add your IPTV playlist to watch here", accent, active,
-                            focus = first, modifier = Modifier.padding(top = 18.dp), onClick = onAddPlaylist,
-                        )
                     }
                 }
             }
@@ -304,186 +317,8 @@ fun FootballScreen(
     }
 }
 
-/**
- * The "Channels" tab: one row per brand, its channels as chips, the viewer's country first. Pressing one plays it,
- * falling back to the same channel's other feeds (another country's, or the FHD one).
- */
-@Composable
-private fun ChannelsTab(
-    brands: List<PopularChannels.Brand>,
-    mostWatched: List<IptvChannel>,
-    popular: List<IptvChannel>,
-    accent: Color,
-    active: Boolean,
-    first: FocusRequester,
-    onPlay: (List<WatchAttempt>) -> Unit,
-) {
-    if (brands.isEmpty() && mostWatched.isEmpty()) {
-        Column(Modifier.padding(top = 36.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("No sports channels yet", fontSize = 34.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
-            Text("Sky Sports, TNT, V Sport, Viaplay, DAZN, CBS Sports and others show here after the next playlist sync.", fontSize = 15.sp, color = Palette.Muted)
-        }
-        return
-    }
-    fun play(pick: PopularChannels.Pick) {
-        val same = Names.channel(pick.channel.name)
-        val others = popular.filter { it.url != pick.channel.url && Names.channel(it.name) == same }
-        onPlay((listOf(pick.channel) + others).take(MAX_ATTEMPTS).map { WatchAttempt(pick.label, it, event = false) })
-    }
-    Column(Modifier.padding(top = 18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (mostWatched.isNotEmpty()) {
-            RowCard(live = false, verticalAlignment = Alignment.Top) {
-                Text("Most watched", fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.width(150.dp).padding(top = 13.dp))
-                FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(TILE_GAP), verticalArrangement = Arrangement.spacedBy(TILE_GAP)) {
-                    mostWatched.map(PopularChannels::pick).forEachIndexed { i, pick ->
-                        ChannelTile(pick.channel.logo, pick.name, pick.detail.ifEmpty { "Live" }, accent, active, focus = if (i == 0) first else null) { play(pick) }
-                    }
-                }
-            }
-        }
-        brands.forEachIndexed { b, brand ->
-            // The brand sits level with its first line of tiles, however many lines they wrap to.
-            RowCard(live = false, verticalAlignment = Alignment.Top) {
-                Text(brand.name, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.width(150.dp).padding(top = 13.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    @Composable
-                    fun tiles(picks: List<PopularChannels.Pick>, takesFirstFocus: Boolean) =
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(TILE_GAP), verticalArrangement = Arrangement.spacedBy(TILE_GAP)) {
-                            picks.forEachIndexed { i, pick ->
-                                ChannelTile(pick.channel.logo, pick.name, pick.detail.ifEmpty { "Live" }, accent, active, focus = if (takesFirstFocus && i == 0) first else null) { play(pick) }
-                            }
-                        }
-                    // 4K, UHD and FHD first; HD and SD under their own heading, so the sharp feeds are what you see first.
-                    // First focus goes to "Most watched" when it's there, else to the first brand's first tile.
-                    val firstBrand = b == 0 && mostWatched.isEmpty()
-                    if (brand.sharp.isNotEmpty()) tiles(brand.sharp, takesFirstFocus = firstBrand)
-                    if (brand.other.isNotEmpty()) {
-                        Text(
-                            "HD AND SD", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp, color = Palette.Muted,
-                            modifier = Modifier.padding(top = if (brand.sharp.isEmpty()) 4.dp else 2.dp),
-                        )
-                        tiles(brand.other, takesFirstFocus = firstBrand && brand.sharp.isEmpty())
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** A league with nothing today: when its next match day is, and how big. */
-@Composable
-private fun NothingInLeague(next: LeaguePage.NextDay?, now: Instant, zone: ZoneId, is24Hour: Boolean) {
-    Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("No matches today", fontSize = 34.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
-        if (next != null) {
-            val at = next.kickoff.atZone(zone)
-            val day = if (at.toLocalDate() == now.atZone(zone).toLocalDate().plusDays(1)) "Tomorrow"
-            else at.format(DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault()))
-            val time = FootballBoards.timeLabel(next.kickoff, zone, is24Hour)
-            val count = if (next.count == 1) "1 match at $time" else "${next.count} matches from $time"
-            Text("Next: $day · $count", fontSize = 15.sp, color = Palette.Muted)
-        }
-    }
-}
-
-/**
- * One of a league's matches today, on one line: minute or kickoff, the teams (and score once started), a dot when
- * a followed team plays, and the provider chips. Results are dimmed and have no chips.
- */
-@Composable
-private fun LeagueRow(
-    match: FootballMatch,
-    result: Boolean,
-    followed: Set<Int>,
-    chips: MatchChips?,
-    hasPlaylist: Boolean,
-    now: Instant,
-    zone: ZoneId,
-    is24Hour: Boolean,
-    accent: Color,
-    active: Boolean,
-    focus: FocusRequester?,
-    onWatch: (FootballMatch, List<WatchAttempt>) -> Unit,
-) {
-    RowCard(live = match.live && !result, modifier = Modifier.alpha(if (result) 0.6f else 1f)) {
-        Row(Modifier.width(76.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (match.live) Box(Modifier.size(7.dp).clip(CircleShape).background(accent))
-            val status = when {
-                result -> match.result ?: "FT"
-                match.live -> match.liveTime ?: "Live"
-                else -> FootballBoards.timeLabel(match.kickoff, zone, is24Hour)
-            }
-            Text(status.uppercase(), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp, maxLines = 1)
-        }
-        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val title = if (match.started) "${match.home.name} ${match.home.score ?: 0}–${match.away.score ?: 0} ${match.away.name}"
-            else "${match.home.name} – ${match.away.name}"
-            Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-            if (match.home.id in followed || match.away.id in followed) Box(Modifier.size(7.dp).clip(CircleShape).background(accent))
-        }
-        when {
-            result -> Box(Modifier.width(CHIPS_WIDTH))
-            chips != null -> ProviderChips(match, chips, accent, active, focus, maxChips = MAX_CHIPS, onWatch = onWatch)
-            hasPlaylist -> Box(Modifier.width(CHIPS_WIDTH)) { Text("Not in your playlist", fontSize = 13.sp, color = Palette.Muted) }
-        }
-    }
-}
-
-@Composable
-private fun NothingToday(next: FootballMatch?, now: Instant, zone: ZoneId, is24Hour: Boolean) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("No matches today", fontSize = 34.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
-        if (next != null) {
-            val day = FootballBoards.dayLabel(next.kickoff, now, zone, short = false).lowercase().replaceFirstChar { it.uppercase() }
-            Text(
-                "Next: ${next.home.name} – ${next.away.name} · $day · ${FootballBoards.timeLabel(next.kickoff, zone, is24Hour)}",
-                fontSize = 15.sp, color = Palette.Muted,
-            )
-        }
-    }
-}
-
-/** One of today's matches: what and when on the left, where to watch and Watch on the right. */
-@Composable
-private fun MatchCard(
-    match: FootballMatch,
-    lines: FootballLines,
-    chips: MatchChips?,
-    hasPlaylist: Boolean,
-    accent: Color,
-    active: Boolean,
-    focus: FocusRequester?,
-    large: Boolean,
-    onWatch: (FootballMatch, List<WatchAttempt>) -> Unit,
-) {
-    RowCard(live = lines.live, padding = PaddingValues(start = 22.dp, end = 12.dp, top = 14.dp, bottom = 14.dp)) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (lines.live) Box(Modifier.size(8.dp).clip(CircleShape).background(accent))
-                Text(lines.label.uppercase(), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp, color = Palette.Muted)
-            }
-            if (match.started) {
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    val name = if (large) 28.sp else 22.sp
-                    Text(match.home.name, fontSize = name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                    Text("${match.home.score ?: 0}–${match.away.score ?: 0}", fontSize = if (large) 48.sp else 34.sp, fontWeight = FontWeight.Bold, lineHeight = 48.sp)
-                    Text(match.away.name, fontSize = name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                }
-            } else {
-                Text(lines.title, fontSize = if (large) 34.sp else 26.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            if (lines.detail.isNotEmpty()) Text(lines.detail, fontSize = 14.sp, color = Palette.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-
-        when {
-            chips != null -> ProviderChips(match, chips, accent, active, focus, maxChips = MAX_CHIPS, onWatch = onWatch)
-            hasPlaylist -> Box(Modifier.width(CHIPS_WIDTH)) { Text("Not in your playlist", fontSize = 13.sp, color = Palette.Muted) }
-        }
-    }
-}
-
 /** A match's ways to watch: [usable] feeds in the order to try them, and [providers], one per chip. */
-private data class MatchChips(val usable: List<WatchOption>, val providers: List<Pair<String, WatchOption>>)
+internal data class MatchChips(val usable: List<WatchOption>, val providers: List<Pair<String, WatchOption>>)
 
 /**
  * Hidden channels drop out, ones that played lately come first and recent failures last (ChannelHealth); then one
@@ -506,120 +341,13 @@ private fun chipsFor(
     }
 }
 
-/**
- * One chip per provider (the same feed in FHD and HD shares one), the viewer's country first; "+N" shows the rest
- * on a second line and moves focus to the first of them.
- */
-@Composable
-private fun ProviderChips(
-    match: FootballMatch,
-    chips: MatchChips,
-    accent: Color,
-    active: Boolean,
-    focus: FocusRequester?,
-    maxChips: Int,
-    onWatch: (FootballMatch, List<WatchAttempt>) -> Unit,
-) {
-    val (usable, providers) = chips
-    // Pressing a chip tries it first, then the other chips, then every other feed for the match.
-    fun attempts(first: WatchOption): List<WatchAttempt> =
-        (listOf(first) + providers.map { it.second } + usable).distinctBy { it.channel.url }.take(MAX_ATTEMPTS)
-            .map { WatchAttempt(Names.provider(it.channel, it.score == 3), it.channel, event = it.score == 3) }
-    var expanded by remember(match.id) { mutableStateOf(false) }
-    // The page stays composed between visits, so it folds back up when you leave.
-    LaunchedEffect(active) { if (!active) expanded = false }
-    val firstExtra = remember { FocusRequester() }
-    LaunchedEffect(expanded) { if (expanded) { withFrameNanos { }; runCatching { firstExtra.requestFocus() } } }
-    FlowRow(
-        Modifier.width(CHIPS_WIDTH),
-        horizontalArrangement = Arrangement.spacedBy(TILE_GAP),
-        verticalArrangement = Arrangement.spacedBy(TILE_GAP),
-    ) {
-        val shown = if (expanded) providers.take(MAX_EXPANDED) else providers.take(maxChips)
-        shown.forEachIndexed { i, (label, option) ->
-            val (name, detail) = tileText(label, option.channel)
-            ChannelTile(
-                option.channel.logo, name, detail, accent, active,
-                focus = when {
-                    i == 0 -> focus
-                    i == maxChips -> firstExtra
-                    else -> null
-                },
-            ) { onWatch(match, attempts(option)) }
-        }
-        val more = providers.size - shown.size
-        if (!expanded && more > 0) MoreTile("+$more", "Show $more more channels", accent, active) { expanded = true }
-    }
-}
-
-private const val MAX_CHIPS = 3
-private val TILE_WIDTH = 128.dp
-private val TILE_HEIGHT = 48.dp
-private val TILE_GAP = 8.dp
-/** The tiles' column: three tiles and "+N", left-aligned and the same on every row, so each row's first tile starts on one line. */
-private val CHIPS_WIDTH = TILE_WIDTH * 3 + TILE_GAP * 3 + TILE_HEIGHT
-
 /** A provider label as a tile's two lines: "Viaplay FI" → "Viaplay" over "FI · FHD". */
-private fun tileText(label: String, channel: IptvChannel): Pair<String, String> {
+internal fun tileText(label: String, channel: IptvChannel): Pair<String, String> {
     val words = label.split(' ')
     val code = words.lastOrNull()?.takeIf { words.size > 1 && it.length in 2..3 && it.all { c -> c.isUpperCase() } }
     val name = if (code != null) words.dropLast(1).joinToString(" ") else label
     val quality = when (PopularChannels.quality(channel)) { 2 -> "UHD"; 1 -> "FHD"; else -> null }
     return name to (listOfNotNull(code, quality).joinToString(" · ").ifEmpty { "Live" })
-}
-
-/**
- * A channel to play: its logo from the playlist (the initials until it loads, or without one), the name, and
- * country and quality underneath. White while focused, like every other control on the page.
- */
-@Composable
-private fun ChannelTile(logo: String?, name: String, detail: String, accent: Color, active: Boolean, focus: FocusRequester?, onClick: () -> Unit) {
-    val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
-    val shape = RoundedCornerShape(10.dp)
-    val fg = if (focused) Palette.Ink else Palette.White
-    Row(
-        Modifier
-            .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
-            .scale(if (focused) 1.06f else 1f)
-            .then(if (focused) Modifier.shadow(16.dp, shape, ambientColor = accent, spotColor = accent) else Modifier)
-            .clip(shape)
-            .background(if (focused) Palette.White else Palette.Raised)
-            .focusProperties { canFocus = active }
-            .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
-            .size(TILE_WIDTH, TILE_HEIGHT)
-            .padding(start = 7.dp, end = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
-    ) {
-        ChannelLogo(logo, name, onWhite = focused)
-        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(name, color = fg, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(detail, color = fg.copy(alpha = 0.7f), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-        }
-    }
-}
-
-/** "+N", the size of a logo tile's height, square. */
-@Composable
-private fun MoreTile(label: String, description: String, accent: Color, active: Boolean, onClick: () -> Unit) {
-    val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
-    val shape = RoundedCornerShape(10.dp)
-    Box(
-        Modifier
-            .scale(if (focused) 1.06f else 1f)
-            .then(if (focused) Modifier.shadow(16.dp, shape, ambientColor = accent, spotColor = accent) else Modifier)
-            .clip(shape)
-            .background(if (focused) Palette.White else Palette.Raised)
-            .focusProperties { canFocus = active }
-            .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = description }
-            .size(TILE_HEIGHT),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(label, color = if (focused) Palette.Ink else Palette.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-    }
 }
 
 /** Initials' grounds for channels without a logo: muted, so a row of them doesn't shout. */
@@ -630,7 +358,7 @@ private val MonogramGrounds = listOf(0xFF5B3FA8, 0xFF2C3A8C, 0xFF1F6F5C, 0xFF8A4
  * light square turns grey with an edge so it doesn't melt into the tile.
  */
 @Composable
-private fun ChannelLogo(url: String?, name: String, onWhite: Boolean) {
+internal fun ChannelLogo(url: String?, name: String, onWhite: Boolean) {
     val logos = (LocalContext.current.applicationContext as LauncherApp).container.logos
     val logo by produceState(url?.let { logos.cached(it) }, url) { if (url != null && value == null) value = logos.load(url) }
     val shape = RoundedCornerShape(8.dp)
@@ -669,6 +397,6 @@ private val LogoGroundDark = Color(0xFF1B1B26)
 private val LogoGroundOnWhite = Color(0xFFE8E8EE)
 private val LogoEdge = Color(0x290B0B12)
 /** How many channels the player works through before giving up (15 s each at worst). */
-private const val MAX_ATTEMPTS = 6
+internal const val MAX_ATTEMPTS = 6
 /** "+N" opens up to this many over two lines; more than that is noise. */
-private const val MAX_EXPANDED = 8
+internal const val MAX_EXPANDED = 8

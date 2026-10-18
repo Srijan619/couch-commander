@@ -76,25 +76,31 @@ object PopularChannels {
 
     /** The brands' film and entertainment channels ("beIN Entertainment") aren't sport. */
     private val NOT_SPORT = setOf("entertainment", "movies", "movie", "drama", "series", "kids")
+    /** Nor, for the football page, are their channels for another sport ("Sky Sport MotoGP 4K"). */
+    private val OTHER_SPORT = setOf(
+        "tennis", "motogp", "f1", "formula", "nba", "nfl", "nhl", "mlb", "golf", "cricket", "darts", "racing", "cycling",
+        "rugby", "ufc", "boxing", "wwe", "snooker", "basket", "basketball", "hockey", "baseball",
+    )
 
     /**
      * Not a channel to browse: an event or PPV slot, a playlist's section divider ("##### MOVISTAR #####"), or one of a
-     * brand's non-sport channels.
+     * brand's non-sport or non-football channels.
      */
     private fun isEventSlot(channel: IptvChannel): Boolean {
         if ("##" in channel.name) return true
         // A slot named after one match carries its own "|" or " vs " after the provider prefix ("US| ESPN+ US | Macarthur vs …").
         val rest = plain(channel.name).replace(PREFIX, "")
         if ('|' in rest || VERSUS.containsMatchIn(rest)) return true
-        val words = Names.fold(rest).split(' ')
+        // Bracketed tags label a regular channel too: "UK| TNT ULTIMATE 4K+ [LIVE-EVENT]" is TNT's 4K channel.
+        val words = Names.fold(rest.replace(BRACKETS, " ")).split(' ')
         // "Only Event 3" is a slot; "Main Event" is Sky's main channel.
         val slot = words.withIndex().any { (i, w) -> w == "event" && words.getOrNull(i - 1) != "main" }
-        return slot || words.any { it in EVENT_SLOTS || it in NOT_SPORT }
+        return slot || words.any { it in EVENT_SLOTS || it in NOT_SPORT || it in OTHER_SPORT }
     }
 
     /**
      * [channels] by brand, in the brands' order, each split by quality. Within a group, [home]'s channels first, then
-     * the sharper feed; the same channel in UHD and FHD shows once, as the sharper one.
+     * English-language ones, then the sharper feed; the same channel in UHD and FHD shows once, as the sharper one.
      */
     fun group(channels: List<IptvChannel>, home: String?): List<Brand> =
         // Filtered again here: a list stored by an older sync can still hold event slots. Each channel's name is read
@@ -107,7 +113,7 @@ object PopularChannels {
                     .sortedWith(compareByDescending<Facts> { it.quality }.thenBy { it.channel.number ?: Int.MAX_VALUE })
                     // The same channel from one country once, as its sharpest feed.
                     .distinctBy { "${it.name.lowercase()}|${it.country}" }
-                    .sortedBy { if (home != null && it.country == home) 0 else 1 }
+                    .sortedBy { if (home != null && it.country == home) 0 else if (it.country in ENGLISH) 1 else 2 }
                 val (sharp, other) = picks.partition { it.quality > 0 }
                 Brand(brand, sharp.take(MAX_PER_BRAND).map(Facts::pick), other.take(MAX_PER_BRAND).map(Facts::pick))
             }
@@ -123,13 +129,19 @@ object PopularChannels {
      */
     fun pick(channel: IptvChannel): Pick {
         val brand = brand(channel)
-        if (brand != null) return Pick(channel, name(channel, brand).let { if (it.equals(brand, ignoreCase = true)) it else "$brand $it" }.take(24), listOfNotNull(country(channel), qualityTag(channel)).joinToString(" · "))
+        if (brand != null) return Pick(channel, withBrand(name(channel, brand), brand), listOfNotNull(country(channel), qualityTag(channel)).joinToString(" · "))
         val label = Names.provider(channel, event = false)
         val words = label.split(' ')
         val code = words.lastOrNull()?.takeIf { words.size > 1 && it.length in 2..3 && it.all { c -> c.isUpperCase() } }
         val name = if (code != null) words.dropLast(1).joinToString(" ") else label
         return Pick(channel, name, listOfNotNull(code, qualityTag(channel)).joinToString(" · "))
     }
+
+    /** A tile's name where no brand row names it ("On now", "Most watched"): "Main Event" → "Sky Sports Main Event". */
+    fun withBrand(name: String, brand: String): String = if (name.startsWith(brand, ignoreCase = true)) name else "$brand $name"
+
+    /** Countries whose feeds have English commentary. */
+    private val ENGLISH = setOf("UK", "GB", "IE", "US", "CA", "AU")
 
     private val PREFIX = Regex("""^\s*([A-Za-z]{2,3})\s*[|:]\s*""")
     private val BRACKETS = Regex("""[\[(][^\])]*[\])]""")
@@ -164,13 +176,20 @@ object PopularChannels {
         val kept = words.drop(brandWords).ifEmpty { words }
         // Playlists often shout ("MAIN EVENT"); short codes ("UK", "F1", "PL") and acronyms stay as they are.
         val shouting = kept.none { w -> w.any { it.isLowerCase() } }
-        val rest = if (!shouting) kept.joinToString(" ") else kept.joinToString(" ") { w ->
+        val rest = kept.joinToString(" ") { w ->
             when {
-                w.length <= 3 || w.uppercase() in ACRONYMS -> w
+                // "PL" beside "Premier League" read as two channels; spelled out, the two are one and dedupe.
+                w.equals("PL", ignoreCase = true) -> "Premier League"
+                !shouting || w.length <= 3 || w.uppercase() in ACRONYMS -> w
                 else -> SPELLED[w.lowercase()] ?: w.lowercase().replaceFirstChar { it.uppercase() }
             }
         }
-        return rest
+        // A bare number or sign says nothing on its own: "251" is "Sky Sports 251", "+" is "Sky Sports+".
+        return when {
+            rest.any { it.isLetter() } -> rest
+            rest.any { it.isDigit() } -> "$brand $rest"
+            else -> "$brand$rest"
+        }
     }
 
     private val ACRONYMS = setOf("DAZN", "ESPN", "UEFA", "NFL", "NBA", "NHL", "MLB", "UFC", "WWE")
