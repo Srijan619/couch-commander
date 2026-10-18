@@ -2,10 +2,12 @@ package app.couchcommander.remote
 
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import app.couchcommander.AppContainer
 import app.couchcommander.data.iptv.IptvSource
 import app.couchcommander.data.iptv.VodNames
 import app.couchcommander.data.iptv.XtreamVod
+import app.couchcommander.player.LivePlayback
 import app.couchcommander.player.VodPlay
 import app.couchcommander.player.VodPlayerActivity
 import app.media.MediaKind
@@ -52,7 +54,10 @@ class RemoteLibrary(private val context: Context, private val container: AppCont
             }
             val leftHere = watching?.takeIf { it.season == episode.season && it.episode == episode.number }
             val start = request.startMs ?: leftHere?.positionMs?.takeIf { it >= RESUME_FROM_MS } ?: 0
-            fun of(e: app.couchcommander.data.iptv.VodEpisode) = VodPlay(title, label, XtreamVod.episodeStreamUrl(src, e), e.id, e.ext, e.season, e.number, e.title)
+            // TMDB's episode names, as on the title page; the panel's are often just its file name.
+            val names = container.media.episodes(title, episode.season)?.associate { it.number to it.title }.orEmpty()
+            fun of(e: app.couchcommander.data.iptv.VodEpisode) =
+                VodPlay(title, label, XtreamVod.episodeStreamUrl(src, e), e.id, e.ext, e.season, e.number, names[e.number].takeIf { e.season == episode.season }?.takeIf { it.isNotBlank() } ?: e.title)
             val after = eps.getOrNull(eps.indexOf(episode) + 1)
             of(episode).copy(startMs = start, next = after?.let(::of))
         }
@@ -64,6 +69,18 @@ class RemoteLibrary(private val context: Context, private val container: AppCont
         ContinueItem(
             w.title.id, typeOf(w.title.kind), w.title.title, w.title.posterPath, w.title.backdropPath, w.version,
             w.positionMs, w.durationMs, w.season, w.episode, w.episodeTitle, w.atEpochMillis,
+        )
+    }
+
+    override fun now(): Now {
+        val live = LivePlayback.current ?: return Now()
+        val p = live.play
+        return Now(
+            live.playing,
+            ContinueItem(
+                p.title.id, typeOf(p.title.kind), p.title.title, p.title.posterPath, p.title.backdropPath, p.version,
+                live.positionAt(SystemClock.elapsedRealtime()), live.durationMs, p.season, p.episode, p.episodeTitle, System.currentTimeMillis(),
+            ),
         )
     }
 

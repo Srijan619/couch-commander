@@ -1,5 +1,6 @@
 package app.couchcommander.data.media
 
+import app.couchcommander.data.iptv.VodNames
 import app.media.MediaKind
 import app.media.MovieDetails
 import java.io.File
@@ -74,6 +75,8 @@ class ContinueWatching(dir: File, private val max: Int = MAX) {
 
     private fun read(): List<Watching> =
         runCatching { json.decodeFromString(ContinueFile.serializer(), file.readText()).titles }.getOrDefault(emptyList())
+            // Saved before the panel's file names were cleaned up ("MobLand [4K] - S02E03").
+            .map { w -> w.copy(episodeTitle = w.episodeTitle?.let(VodNames::episodeTitle)?.takeIf { it.isNotEmpty() }) }
 
     private fun write(titles: List<Watching>) {
         val tmp = File(file.parentFile, "${file.name}.tmp")

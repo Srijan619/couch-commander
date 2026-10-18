@@ -100,6 +100,7 @@ class VodPlayerActivity : ComponentActivity() {
     private val saveTick = object : Runnable {
         override fun run() {
             save()
+            publish()
             handler.postDelayed(this, SAVE_EVERY_MS)
         }
     }
@@ -186,6 +187,9 @@ class VodPlayerActivity : ComponentActivity() {
                     if (!isPlaying) save()
                 }
 
+                // Play, pause, seeks, buffering: whatever a phone asking `/now` should see.
+                override fun onEvents(player: Player, events: Player.Events) = publish()
+
                 // The message names the failure kind, never the URL (it holds the login).
                 override fun onPlayerError(error: PlaybackException) {
                     val why = error.errorCodeName.removePrefix("ERROR_CODE_").lowercase().replace('_', ' ')
@@ -218,6 +222,7 @@ class VodPlayerActivity : ComponentActivity() {
 
     override fun onStop() {
         save()
+        LivePlayback.clear(this)
         super.onStop()
         handler.removeCallbacksAndMessages(null)
         view.player = null
@@ -368,6 +373,17 @@ class VodPlayerActivity : ComponentActivity() {
             return
         }
         write(current, position, duration)
+    }
+
+    /** The player as it is now, for the phone's `/now` (see [LivePlayback]). */
+    private fun publish() {
+        val p = player ?: return
+        LivePlayback.publish(
+            LivePlayback.Snapshot(
+                owner = this, play = current, positionMs = p.currentPosition, durationMs = p.duration.takeIf { it > 0 } ?: 0,
+                playing = p.playWhenReady, advancing = p.isPlaying, atElapsed = SystemClock.elapsedRealtime(),
+            ),
+        )
     }
 
     /** [play] at [positionMs], or with null off the shelf; on a background thread, it writes a file. */

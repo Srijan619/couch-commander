@@ -100,7 +100,7 @@ object XtreamVod {
                     id = id,
                     season = season,
                     number = o.str("episode_num")?.toIntOrNull() ?: (i + 1),
-                    title = o.str("title")?.trim().orEmpty(),
+                    title = VodNames.episodeTitle(o.str("title").orEmpty()),
                     ext = o.str("container_extension")?.takeIf { it.isNotBlank() } ?: "mp4",
                 )
             }

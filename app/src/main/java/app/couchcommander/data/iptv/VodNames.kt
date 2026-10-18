@@ -64,6 +64,17 @@ object VodNames {
     fun label(entry: VodEntry): String =
         parse(entry.name).tags.joinToString(" ").ifEmpty { entry.category.trim() }.ifEmpty { "Play" }
 
+    /**
+     * An episode's name from the panel's title for it, which is often the file's name: "MobLand [4K] - S02E03"
+     * has none, "Friends - S01E01 - Pilot" is "Pilot". A title without an "S01E01" is kept as it is.
+     */
+    fun episodeTitle(raw: String): String {
+        val m = EPISODE_CODE.find(raw) ?: return raw.trim()
+        return raw.substring(m.range.last + 1).trim { it.isWhitespace() || it in "-–—:|." }
+    }
+
+    private val EPISODE_CODE = Regex("""(?i)\bS\d{1,2}\s*E\d{1,3}\b""")
+
     /** Each version's chip label, numbered where two would read the same. */
     fun labels(versions: List<VodEntry>): List<String> {
         val plain = versions.map { label(it) }

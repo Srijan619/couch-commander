@@ -55,4 +55,12 @@ class VodNamesTest {
         assertEquals("EN 4K", VodNames.label(VodEntry("1", "EN - Dune (2021) [4K]")))
         assertEquals("Movies 2024", VodNames.label(VodEntry("1", "Dune", category = "Movies 2024")))
     }
+
+    @Test
+    fun episodeTitleDropsThePanelsFileName() {
+        assertEquals("", VodNames.episodeTitle("MobLand [4K] - S02E03"))
+        assertEquals("Pilot", VodNames.episodeTitle("Friends - S01E01 - Pilot"))
+        assertEquals("The One Where", VodNames.episodeTitle("Friends S01 E02: The One Where"))
+        assertEquals("Pilot", VodNames.episodeTitle(" Pilot "))
+    }
 }

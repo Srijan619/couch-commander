@@ -46,6 +46,10 @@ data class ContinueItem(
     val atEpochMillis: Long,
 )
 
+/** What the TV's player has on screen, for a phone's widget: [item] is null when nothing plays; [playing] is false once paused. */
+@Serializable
+data class Now(val playing: Boolean = false, val item: ContinueItem? = null)
+
 @Serializable
 data class Played(val title: String, val version: String, val season: Int? = null, val episode: Int? = null, val startMs: Long = 0)
 
@@ -56,6 +60,8 @@ interface Library {
     suspend fun play(request: PlayRequest): Result<Played>
     fun continueWatching(): List<ContinueItem>
     fun removeContinue(ref: TitleRef): Boolean
+    /** The film or episode playing now, with its live position. */
+    fun now(): Now
 }
 
 class RemoteFailure(val status: Int, message: String) : Exception(message)
@@ -70,6 +76,7 @@ class RemoteFailure(val status: Int, message: String) : Exception(message)
  *     POST   /play           {tmdb, type, season?, episode?, version?, startMs?}
  *     GET    /continue                                → {items:[…]}, the latest first
  *     DELETE /continue?tmdb=603&type=movie            → off the shelf (watched, or not wanted)
+ *     GET    /now                                     → {playing, item?}: what's on screen, its position live
  */
 class RemoteApi(
     private val library: Library,
@@ -123,6 +130,7 @@ class RemoteApi(
             }
             "GET" to "/continue" -> ok(ContinueList.serializer(), ContinueList(library.continueWatching()))
             "DELETE" to "/continue" -> ok(Removed.serializer(), Removed(library.removeContinue(queryRef(r))))
+            "GET" to "/now" -> ok(Now.serializer(), library.now())
             else -> Response.error(404, "No ${r.method} ${r.path}")
         }
     }
