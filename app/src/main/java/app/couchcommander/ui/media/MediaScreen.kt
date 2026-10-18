@@ -311,6 +311,7 @@ fun MediaScreen(
                 // amount; the posters' own rows scroll as usual.
                 val rowScrolling = LocalBringIntoViewSpec.current
                 val pivot = with(LocalDensity.current) { remember(this) { ShelfPivot(SHELF_PIVOT.toPx()) } }
+                val justInView = with(LocalDensity.current) { remember(this) { JustInView(CARD_MARGIN.toPx()) } }
                 CompositionLocalProvider(LocalBringIntoViewSpec provides pivot) {
                 Column(Modifier.padding(top = 20.dp).verticalScroll(shelfScroll), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 CompositionLocalProvider(LocalBringIntoViewSpec provides rowScrolling) {
@@ -324,6 +325,9 @@ fun MediaScreen(
                                 SkeletonPosterRow(rememberPulse(), modifier = Modifier.weight(1f).padding(horizontal = 6.dp, vertical = 8.dp))
                             } else {
                             val rowState = remember(tab, row.id) { LazyListState() }
+                            // Continue's wide cards nearly all fit: its row moves only to show one in full, not to put
+                            // the focused card a third of the way in, which cut the one before it in half.
+                            CompositionLocalProvider(LocalBringIntoViewSpec provides if (row.continued.isEmpty()) rowScrolling else justInView) {
                             LazyRow(
                                 Modifier
                                     .weight(1f)
@@ -359,6 +363,7 @@ fun MediaScreen(
                                         }
                                     }
                                 }
+                            }
                             }
                             }
                         }
@@ -468,6 +473,18 @@ private const val HERO_SETTLE_MS = 250L
 private val FOOTER_SPACE = 52.dp
 /** How far below the top of the shelves the focused poster sits: its card's padding and the room it grows into. */
 private val SHELF_PIVOT = 14.dp
+
+/** Room left beside a card scrolled into view, for it to grow into when focused. */
+private val CARD_MARGIN = 10.dp
+
+/** Scrolls only as far as it takes to show what took focus in full, [marginPx] clear of the edge. */
+private class JustInView(private val marginPx: Float) : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = when {
+        offset < marginPx -> offset - marginPx
+        offset + size > containerSize - marginPx -> offset + size - containerSize + marginPx
+        else -> 0f
+    }
+}
 
 /** Scrolls whatever takes focus to [pivotPx] below the top, not just into view. */
 private class ShelfPivot(private val pivotPx: Float) : BringIntoViewSpec {
