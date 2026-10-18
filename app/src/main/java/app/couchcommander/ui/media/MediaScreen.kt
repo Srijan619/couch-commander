@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -121,18 +122,30 @@ fun MediaScreen(
     val mySeries by account.lists(MediaKind.Tv).collectAsStateWithLifecycle()
     val lately by played.all.collectAsStateWithLifecycle()
     // Home: what was played, the account's lists and what's trending, films and series together. Movies and TV:
-    // the account's lists, then TMDB's. Empty ones left out.
+    // the account's lists, then TMDB's. Empty ones left out; one not fetched yet stays as a placeholder, so the
+    // shelves below don't move down when it arrives.
     val rows = buildList {
         fun pick(films: List<MovieDetails>, series: List<MovieDetails>) = when (kind) {
             null -> mix(films, series)
             MediaKind.Movie -> films
             MediaKind.Tv -> series
         }
+        fun pending(films: Boolean, series: Boolean) = when (kind) {
+            null -> films || series
+            MediaKind.Movie -> films
+            MediaKind.Tv -> series
+        }
         if (kind == null) add(ShelfRow(CONTINUE, "Continue", "Where you left off", lately.map { it.title }, lately.associateBy { it.title.ref }))
-        if (session != null) TmdbAccount.SHELVES.forEach { add(ShelfRow(it.name, it.title, it.note, pick(myFilms[it].orEmpty(), mySeries[it].orEmpty()))) }
+        if (session != null) TmdbAccount.SHELVES.forEach {
+            add(ShelfRow(it.name, it.title, it.note, pick(myFilms[it].orEmpty(), mySeries[it].orEmpty()), loading = pending(it !in myFilms, it !in mySeries)))
+        }
         val shelves = if (kind == null) listOf(Shelf.Trending) else Shelf.entries
-        shelves.forEach { add(ShelfRow(it.name, it.title, it.note, pick(movies.rows[it].orEmpty(), tv.rows[it].orEmpty()))) }
-    }.filter { it.titles.isNotEmpty() }
+        shelves.forEach {
+            add(ShelfRow(it.name, it.title, it.note, pick(movies.rows[it].orEmpty(), tv.rows[it].orEmpty()), loading = pending(movies.fetchedAt == null, tv.fetchedAt == null)))
+        }
+    }.filter { it.titles.isNotEmpty() || it.loading }
+    // Some shelf has a title to show (and to focus); until then the hero says what's coming.
+    val ready = rows.any { it.titles.isNotEmpty() }
     var accountOpen by remember { mutableStateOf(false) }
     val accountFocus = remember { FocusRequester() }
     // Closing the panel puts focus back on the pill, not on the shelves.
@@ -171,7 +184,7 @@ fun MediaScreen(
             hero.value = it
         }
     }
-    val firstTitle = rows.firstOrNull()?.titles?.first()
+    val firstTitle = rows.firstOrNull { it.titles.isNotEmpty() }?.titles?.first()
     LaunchedEffect(tab, firstTitle?.id) {
         val now = hovered.value
         if (now == null || (kind != null && now.kind != kind)) hovered.value = firstTitle
@@ -227,7 +240,7 @@ fun MediaScreen(
                         onEnter = { tabFocus[tab].requestFocus() }
                         // Down goes to the first shelf's first title, even when the shelves are scrolled past it.
                         onExit = {
-                            val first = rows.firstOrNull()?.let { key(tab, it.id, it.titles.first()) }
+                            val first = rows.firstOrNull { it.titles.isNotEmpty() }?.let { key(tab, it.id, it.titles.first()) }
                             if (requestedFocusDirection == FocusDirection.Down && first != null) requester(first).requestFocus()
                         }
                     }
@@ -256,14 +269,17 @@ fun MediaScreen(
                 ) { accountOpen = true }
                 Text(clock.time, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
-            Deferred { HeroText(hero.value, accent, Modifier.padding(top = 4.dp)) }
-
-            if (rows.isEmpty()) {
-                Column(Modifier.padding(top = 36.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (ready) {
+                Deferred { HeroText(hero.value, accent, Modifier.padding(top = 4.dp)) }
+            } else {
+                // In the hero's place and height, so the shelves' placeholders sit where the shelves will.
+                Column(Modifier.padding(top = 4.dp).height(HERO_TEXT_HEIGHT), verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom)) {
                     Text(when (kind) { null -> "Getting films and series…"; MediaKind.Movie -> "Getting films…"; MediaKind.Tv -> "Getting series…" }, fontSize = 34.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
                     Text("From TMDB. The first time after a quiet spell can take up to a minute.", fontSize = 15.sp, color = Palette.Muted)
                 }
-            } else {
+            }
+
+            if (rows.isNotEmpty()) {
                 // Moving to another shelf scrolls it to the top, so every Up or Down moves the shelves the same
                 // amount; the posters' own rows scroll as usual.
                 val rowScrolling = LocalBringIntoViewSpec.current
@@ -277,7 +293,9 @@ fun MediaScreen(
                                 Text(row.title, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 2)
                                 Text(row.note, fontSize = 11.sp, color = Palette.Muted, maxLines = 1)
                             }
-                            LazyRow(
+                            if (row.titles.isEmpty()) {
+                                SkeletonPosterRow(rememberPulse(), modifier = Modifier.weight(1f).padding(horizontal = 6.dp, vertical = 8.dp))
+                            } else LazyRow(
                                 Modifier.weight(1f),
                                 // Room for a focused poster to grow without being clipped.
                                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
@@ -304,7 +322,7 @@ fun MediaScreen(
         }
 
         Row(Modifier.align(Alignment.BottomStart).padding(start = 48.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (rows.isNotEmpty()) {
+            if (ready) {
                 Icon(if (inTabs) Icons.ChevronDown else Icons.ArrowUp, null, tint = Palette.Muted, modifier = Modifier.size(14.dp))
                 Text(
                     if (inTabs) "Down: titles" else "Up: Home, Movies, TV, search, account",
@@ -371,6 +389,8 @@ private class ShelfRow(
     val titles: List<MovieDetails>,
     /** Where each title was left, by [ref]: Continue's wide cards. */
     val continued: Map<String, Watching> = emptyMap(),
+    /** Not fetched yet: placeholders hold its place while [titles] is empty. */
+    val loading: Boolean = false,
 )
 
 private val AccountList.title get() = if (this == AccountList.Favorites) "Favourites" else name

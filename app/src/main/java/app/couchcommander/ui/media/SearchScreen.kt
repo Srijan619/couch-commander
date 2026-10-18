@@ -235,6 +235,10 @@ fun SearchScreen(
                     }
                 }
             } else {
+                // Posters still to come, as grey ones where they'll appear: the first page, the next, or the rest
+                // of a person's titles.
+                val more = if (person != null) state.personInfo == null && !state.personFailed else state.firstLoading || state.loading
+                val pulse = if (more) rememberPulse() else null
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(POSTER_WIDTH),
                     state = grid,
@@ -267,14 +271,11 @@ fun SearchScreen(
                             }
                         }
                     }
-                    val more = if (person != null) state.personInfo == null && !state.personFailed else state.loading
-                    if (more || (person == null && state.failed)) {
+                    if (pulse != null) {
+                        items(if (items.isEmpty()) PLACEHOLDER_FIRST else PLACEHOLDER_MORE, key = { "placeholder-$it" }) { SkeletonPoster(pulse) }
+                    } else if (person == null && state.failed) {
                         item(key = "footer", span = { GridItemSpan(maxLineSpan) }) {
-                            if (more) {
-                                Text("Getting more…", fontSize = 14.sp, color = Palette.Muted)
-                            } else {
-                                ActionPill(null, "Retry", accent, active, null, onClick = search::onRetry)
-                            }
+                            ActionPill(null, "Retry", accent, active, null, onClick = search::onRetry)
                         }
                     }
                 }
@@ -305,7 +306,7 @@ private fun message(state: SearchState, person: Person?, empty: Boolean): Pair<S
         else -> "Nothing to show" to "TMDB has no films or series for ${person.name} yet."
     }
     !state.searchable -> "Search TMDB" to "Type a film, a series or who's in it. Up picks films, series or people only."
-    state.firstLoading -> "Searching…" to "The first time after a quiet spell can take up to a minute."
+    state.firstLoading -> null // placeholder posters
     !empty -> null
     state.failed -> "Couldn't search TMDB" to "Check the connection and try again."
     else -> "Nothing found" to "Try other words, or another tab above."
@@ -379,6 +380,9 @@ private val SearchScope.hint: String
         SearchScope.People -> "Actors, directors, writers"
     }
 
+/** Placeholder posters while the first results come, and while more do. */
+private const val PLACEHOLDER_FIRST = 16
+private const val PLACEHOLDER_MORE = 4
 /** How many tiles before the end the next page is asked for. */
 private const val LOAD_AHEAD_ITEMS = 12
 private const val HERO_SETTLE_MS = 250L

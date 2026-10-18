@@ -87,6 +87,11 @@ class MediaRepository(private val dir: File, client: HttpClient, baseUrl: String
         withContext(Dispatchers.IO) { write(kind, next) }
     }
 
+    /** What's already in memory for [title], without asking: lets a page open on it instead of a placeholder. */
+    fun cachedDetails(title: MovieDetails): MovieDetails? = details.get("${title.kind}/${title.id}")
+    fun cachedExtras(title: MovieDetails): TitleExtras? = extras.get("${title.kind}/${title.id}")
+    fun cachedEpisodes(title: MovieDetails, season: Int): List<Episode>? = episodes.get("${title.id}/$season")
+
     /** Everything about one title (cast, runtime, seasons, trailers); null when offline. */
     suspend fun details(title: MovieDetails): MovieDetails? {
         val key = "${title.kind}/${title.id}"

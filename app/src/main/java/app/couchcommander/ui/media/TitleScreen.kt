@@ -110,8 +110,17 @@ fun TitleScreen(
 ) {
     var trailerOpen by remember(title.id) { mutableStateOf(false) }
     val clock = rememberClock()
-    val full by produceState(title, title) { media.details(title)?.let { value = it } }
-    val extras by produceState<TitleExtras?>(null, title) { value = media.extras(title) }
+    // Until each answer is in (or has failed), placeholders hold its place; one already in memory shows at once.
+    var detailsDone by remember(title) { mutableStateOf(media.cachedDetails(title) != null) }
+    var extrasDone by remember(title) { mutableStateOf(media.cachedExtras(title) != null) }
+    val full by produceState(media.cachedDetails(title) ?: title, title) {
+        media.details(title)?.let { value = it }
+        detailsDone = true
+    }
+    val extras by produceState(media.cachedExtras(title), title) {
+        value = media.extras(title)
+        extrasDone = true
+    }
     val backdrop = rememberRemoteImage(full.backdropUrl, 960.dp)
     val poster = rememberRemoteImage(full.posterUrl, POSTER_LARGE_WIDTH)
     val trailer = full.videos.firstOrNull()
@@ -129,9 +138,11 @@ fun TitleScreen(
     var picked by remember(title.id) { mutableStateOf<Int?>(null) }
     val version = versions?.takeIf { it.isNotEmpty() }?.let { v -> (picked ?: v.indices.firstOrNull { labels[it] == watching?.version } ?: 0).coerceIn(v.indices) }
     val chosen = version?.let { versions?.getOrNull(it) }
+    var panelDone by remember(chosen?.id) { mutableStateOf(false) }
     val panelEpisodes by produceState<List<VodEpisode>?>(null, chosen?.id) {
         value = null
         if (title.kind == MediaKind.Tv && chosen != null) value = container.vod.episodes(source, chosen)
+        panelDone = true
     }
     val byNumber = remember(panelEpisodes) { panelEpisodes?.associateBy { it.season to it.number }.orEmpty() }
     // A series carries on from the episode it was left at, else starts at the first (specials last).
@@ -139,6 +150,8 @@ fun TitleScreen(
         watching?.let { w -> eps.firstOrNull { it.season == w.season && it.number == w.episode } } ?: eps.firstOrNull { it.season >= 1 } ?: eps.firstOrNull()
     }
     val canPlay = source is IptvSource.Xtream && chosen != null && (title.kind == MediaKind.Movie || upNext != null)
+    // Play is still being worked out: the panel's versions, or a series' episodes on it.
+    val playPending = source is IptvSource.Xtream && (versions == null || (title.kind == MediaKind.Tv && chosen != null && !panelDone))
     val resumeAt = watching?.positionMs?.takeIf { it >= RESUME_FROM_MS && (title.kind == MediaKind.Movie || (watching.season == upNext?.season && watching.episode == upNext?.number)) }
 
     /** Starts [episode] (or the film) at [startMs] in the chosen version; a series' next episode follows it. */
@@ -166,7 +179,11 @@ fun TitleScreen(
     val scope = rememberCoroutineScope()
     // Where this title stands in the account; null until it's known, so the buttons don't show a guess.
     var mine by remember(title.id, session) { mutableStateOf<MovieAccountState?>(null) }
-    LaunchedEffect(title.id, session) { mine = account.state(title) }
+    var mineDone by remember(title.id, session) { mutableStateOf(false) }
+    LaunchedEffect(title.id, session) {
+        mine = account.state(title)
+        mineDone = true
+    }
     var rating by remember(title.id) { mutableStateOf(false) }
     val rateFocus = remember(title.id) { FocusRequester() }
     val firstRating = remember(title.id) { FocusRequester() }
@@ -185,9 +202,17 @@ fun TitleScreen(
     val seasons = remember(full.seasonList) { Seasons.ordered(full.seasonList) }
     var season by remember(title.id) { mutableStateOf<Int?>(null) }
     LaunchedEffect(seasons) { if (season == null) season = Seasons.initial(full.seasonList, full.nextEpisode)?.number }
-    val episodes by produceState<List<Episode>?>(null, title.id, season) {
-        value = null
-        season?.let { value = media.episodes(title, it) }
+    // True once the viewer has moved to another season; the first one opened doesn't wait.
+    var seasonPicked by remember(title.id) { mutableStateOf(false) }
+    var episodesFailed by remember(title.id, season) { mutableStateOf(false) }
+    val episodes by produceState(season?.let { media.cachedEpisodes(title, it) }, title.id, season) {
+        val s = season
+        value = s?.let { media.cachedEpisodes(title, it) }
+        if (s == null || value != null) return@produceState
+        // Focus opens a season, so moving across the tabs asks only for the one it stops on.
+        if (seasonPicked) delay(SEASON_SETTLE_MS)
+        value = media.episodes(title, s)
+        episodesFailed = value == null
     }
     val seasonFocus = remember(seasons.size) { List(seasons.size) { FocusRequester() } }
     val ownTrailerFocus = remember(title.id) { FocusRequester() }
@@ -281,9 +306,12 @@ fun TitleScreen(
                     full.overview?.let {
                         Text(it, fontSize = 14.sp, lineHeight = 20.sp, maxLines = 5, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 520.dp).padding(top = 4.dp))
                     }
-                    if (canPlay || trailer != null || session != null) {
+                    val accountPending = session != null && !mineDone
+                    if (canPlay || trailer != null || session != null || playPending || !detailsDone) {
                         val pills = active && !trailerOpen && !rating
+                        val pulse = if (playPending || !detailsDone || accountPending) rememberPulse() else null
                         Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            if (!canPlay && playPending && pulse != null) SkeletonPill(pulse)
                             if (canPlay) {
                                 val label = when {
                                     upNext != null -> (if (resumeAt != null) "Resume" else "Play") + " S${upNext.season} E${upNext.number}"
@@ -293,6 +321,12 @@ fun TitleScreen(
                                 ActionPill(Icons.Play, label, accent, pills, focus = first) { playNow() }
                             }
                             if (trailer != null) ActionPill(if (canPlay) Icons.Film else Icons.Play, "Trailer", accent, pills, focus = trailerFocus) { trailerOpen = true }
+                            else if (!detailsDone && pulse != null) SkeletonPill(pulse, 112.dp)
+                            if (mine == null && accountPending && pulse != null) {
+                                SkeletonPill(pulse, 128.dp)
+                                SkeletonPill(pulse, 128.dp)
+                                SkeletonPill(pulse, 84.dp)
+                            }
                             mine?.let { m ->
                                 ActionPill(
                                     if (m.watchlist) Icons.Check else Icons.Plus, "Watchlist", accent, pills,
@@ -368,6 +402,14 @@ fun TitleScreen(
                 }
             }
 
+            if (seasons.isEmpty() && title.kind == MediaKind.Tv && !detailsDone) {
+                // The seasons come with the details: their tabs and a list's worth of rows until then.
+                val pulse = rememberPulse()
+                Row(Modifier.padding(top = 26.dp).offset(x = (-12).dp)) { repeat(3) { SkeletonTab(pulse) } }
+                Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    repeat(PLACEHOLDER_EPISODES) { SkeletonEpisode(pulse) }
+                }
+            }
             if (seasons.isNotEmpty()) {
                 Row(
                     Modifier
@@ -380,13 +422,22 @@ fun TitleScreen(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     seasons.forEachIndexed { i, s ->
-                        TabPill(s.name, s.number == season, accent, active, seasonRequester(i)) { season = s.number }
+                        TabPill(s.name, s.number == season, accent, active, seasonRequester(i)) {
+                            if (s.number != season && season != null) seasonPicked = true
+                            season = s.number
+                        }
                     }
                 }
                 Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     val list = episodes
                     when {
-                        list == null -> Text("Loading episodes…", fontSize = 14.sp, color = Palette.Muted)
+                        list == null && episodesFailed -> Text("Couldn't get this season's episodes.", fontSize = 14.sp, color = Palette.Muted)
+                        list == null -> {
+                            // As many rows as TMDB says the season has, so the page doesn't jump when they come.
+                            val pulse = rememberPulse()
+                            val count = seasons.firstOrNull { it.number == season }?.episodeCount?.takeIf { it > 0 } ?: PLACEHOLDER_EPISODES
+                            repeat(count.coerceAtMost(MAX_PLACEHOLDER_EPISODES)) { SkeletonEpisode(pulse) }
+                        }
                         list.isEmpty() -> Text("No episodes listed for this season.", fontSize = 14.sp, color = Palette.Muted)
                         else -> list.forEach { e ->
                             val onPanel = byNumber[e.season to e.number]?.takeIf { canPlay }
@@ -401,6 +452,10 @@ fun TitleScreen(
                 }
             }
 
+            if (extras == null && !extrasDone) {
+                Text("More like this", fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 26.dp, bottom = 4.dp))
+                SkeletonPosterRow(rememberPulse(), modifier = Modifier.padding(vertical = 8.dp))
+            }
             if (related.isNotEmpty()) {
                 Text("More like this", fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 26.dp, bottom = 4.dp))
                 LazyRow(
@@ -480,6 +535,11 @@ private fun TrailerScreen(keys: List<String>, onClose: () -> Unit) {
 }
 
 private val POSTER_LARGE_WIDTH = 170.dp
+/** How long focus rests on a season tab before its episodes are asked for. */
+private const val SEASON_SETTLE_MS = 250L
+/** Rows shown while a season's length isn't known yet, and at most while it is. */
+private const val PLACEHOLDER_EPISODES = 6
+private const val MAX_PLACEHOLDER_EPISODES = 20
 /** Less than this in, a title starts over instead of offering Resume. */
 private const val RESUME_FROM_MS = 30_000L
 
@@ -524,7 +584,7 @@ private fun EpisodeRow(
             .focusProperties { canFocus = active }
             // A row the panel doesn't have still takes focus, so the remote can scroll the list.
             .clickable(interactionSource = interaction, indication = null, role = Role.Button) { if (playable) onPlay() }
-            .height(50.dp)
+            .height(EPISODE_HEIGHT)
             .padding(horizontal = 16.dp)
             .alpha(if (upcoming) 0.6f else 1f),
         verticalAlignment = Alignment.CenterVertically,
