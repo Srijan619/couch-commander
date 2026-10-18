@@ -64,6 +64,14 @@ object VodNames {
     fun label(entry: VodEntry): String =
         parse(entry.name).tags.joinToString(" ").ifEmpty { entry.category.trim() }.ifEmpty { "Play" }
 
+    /** Each version's chip label, numbered where two would read the same. */
+    fun labels(versions: List<VodEntry>): List<String> {
+        val plain = versions.map { label(it) }
+        val counts = plain.groupingBy { it }.eachCount()
+        val seen = HashMap<String, Int>()
+        return plain.map { l -> if ((counts[l] ?: 0) > 1) "$l ${seen.merge(l, 1, Int::plus)}" else l }
+    }
+
     /**
      * The order versions are offered in: English (or untagged) before other languages, then the best picture
      * (4K, FHD, untagged, HD, SD). Read from the name's tags, else its category ("Czech and Slovakia", "SE Movies").

@@ -37,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -139,7 +140,7 @@ fun TitleScreen(
     val versions by produceState<List<VodEntry>?>(null, title.id, catalogue.syncedAtEpochMillis) { value = container.vod.find(title) }
     val continued by container.played.all.collectAsStateWithLifecycle()
     val watching = continued.firstOrNull { it.title.kind == title.kind && it.title.id == title.id }
-    val labels = remember(versions) { versionLabels(versions.orEmpty()) }
+    val labels = remember(versions) { VodNames.labels(versions.orEmpty()) }
     var picked by remember(title.id) { mutableStateOf<Int?>(null) }
     val version = versions?.takeIf { it.isNotEmpty() }?.let { v -> (picked ?: v.indices.firstOrNull { labels[it] == watching?.version } ?: 0).coerceIn(v.indices) }
     val chosen = version?.let { versions?.getOrNull(it) }
@@ -498,7 +499,7 @@ fun TitleScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     itemsIndexed(related, key = { _, t -> t.id }) { i, t ->
-                        PosterTile(t, active, relatedRequester(i), onFocused = {}) { onOpen(t) }
+                        PosterTile(t, rememberUpdatedState(active), relatedRequester(i), onFocused = {}) { onOpen(t) }
                     }
                 }
             }
@@ -580,14 +581,6 @@ private const val RESUME_FROM_MS = 30_000L
 private fun playTime(ms: Long): String {
     val s = ms / 1000
     return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
-}
-
-/** Each version's chip label, numbered where two would read the same. */
-private fun versionLabels(versions: List<VodEntry>): List<String> {
-    val plain = versions.map { VodNames.label(it) }
-    val counts = plain.groupingBy { it }.eachCount()
-    val seen = HashMap<String, Int>()
-    return plain.map { l -> if ((counts[l] ?: 0) > 1) "$l ${seen.merge(l, 1, Int::plus)}" else l }
 }
 
 /**

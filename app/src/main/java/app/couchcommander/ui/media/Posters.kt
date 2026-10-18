@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -86,7 +87,8 @@ private val PosterGrounds = listOf(0xFF3A3F5C, 0xFF5B4A2E, 0xFF2E4A47, 0xFF6B3A2
 @Composable
 fun PosterTile(
     title: MovieDetails,
-    active: Boolean,
+    /** Read only when focus moves, so a change doesn't recompose the tile. */
+    active: State<Boolean>,
     focus: FocusRequester?,
     onFocused: () -> Unit,
     onClick: () -> Unit,
@@ -103,7 +105,7 @@ fun PosterTile(
             .clip(shape)
             .background(PosterGrounds[Math.floorMod(title.title.hashCode(), PosterGrounds.size)])
             .then(if (focused) Modifier.border(2.dp, Palette.White, shape) else Modifier)
-            .focusProperties { canFocus = active }
+            .focusProperties { canFocus = active.value }
             .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = "${title.title}, ${title.year}" }
             .size(POSTER_WIDTH, POSTER_HEIGHT),
@@ -126,7 +128,8 @@ fun PosterTile(
 @Composable
 fun ContinueTile(
     watching: Watching,
-    active: Boolean,
+    /** Read only when focus moves, so a change doesn't recompose the tile. */
+    active: State<Boolean>,
     focus: FocusRequester?,
     onFocused: () -> Unit,
     onLongClick: () -> Unit,
@@ -151,7 +154,7 @@ fun ContinueTile(
             .clip(shape)
             .background(PosterGrounds[Math.floorMod(title.title.hashCode(), PosterGrounds.size)])
             .then(if (focused) Modifier.border(2.dp, Palette.White, shape) else Modifier)
-            .focusProperties { canFocus = active }
+            .focusProperties { canFocus = active.value }
             .onPreviewKeyEvent { e ->
                 val k = e.nativeKeyEvent
                 if (k.keyCode !in confirmKeys) return@onPreviewKeyEvent false

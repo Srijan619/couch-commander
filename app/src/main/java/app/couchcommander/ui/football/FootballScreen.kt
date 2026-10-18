@@ -41,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -161,10 +162,15 @@ fun FootballScreen(
     val first = remember { FocusRequester() }
 
     // "Channels" (with a playlist), "My teams", then one per league. Each visit starts on "My teams" (-1).
+    // Saved, like what was played last: on the TV, low on memory, the launcher is destroyed while the player is up
+    // and built again on Back, which came back to "My teams" instead of the channel that was playing.
     val names = buildList { if (hasPlaylist) add("Channels"); add("My teams"); leagues.forEach { add(it.name) } }
     val mine = if (hasPlaylist) 1 else 0
-    var tab by remember { mutableIntStateOf(-1) }
-    LaunchedEffect(active) { if (!active) tab = -1 }
+    var tab by rememberSaveable { mutableIntStateOf(-1) }
+    var played by rememberSaveable { mutableStateOf<String?>(null) }
+    // Set only when built again with something played: the channel (or match's channel) it names takes focus.
+    var restore by remember { mutableStateOf(played) }
+    LaunchedEffect(active) { if (!active) { tab = -1; played = null } }
     val selected = if (tab < 0) mine else tab.coerceAtMost(names.lastIndex)
     val tabFocus = remember(names.size) { List(names.size) { FocusRequester() } }
     val showChannels = hasPlaylist && selected == 0
@@ -207,11 +213,25 @@ fun FootballScreen(
 
     BackHandler(enabled = active, onBack = onClose)
     LaunchedEffect(active) {
-        if (!active) return@LaunchedEffect
+        if (!active) { restore = null; return@LaunchedEffect }
         withFrameNanos { }
+        if (restore != null) {
+            // The played channel takes focus itself once its tab is built (off the main thread); the open tab if it
+            // doesn't show by then (hidden, or gone from the playlist).
+            delay(1_500)
+            if (restore == null) return@LaunchedEffect
+            restore = null
+        }
         // On the open tab ("My teams"), not on a match's first channel: one OK too many would start a stream.
         runCatching { tabFocus[selected].requestFocus() }
     }
+    val playChannel = remember(onPlayChannel) {
+        { attempts: List<WatchAttempt> -> played = attempts.firstOrNull()?.let { channelKey(it.channel) }; onPlayChannel(attempts) }
+    }
+    val watchMatch = remember(onWatch) {
+        { match: FootballMatch, attempts: List<WatchAttempt> -> played = attempts.firstOrNull()?.let { matchKey(match, it.channel) }; onWatch(match, attempts) }
+    }
+    val restored = remember { { restore = null } }
 
     Box(Modifier.fillMaxSize().background(Palette.Ground)) {
         // The painting, blurred and dimmed once into a small bitmap and stretched: a live full-screen blur, and a
@@ -254,7 +274,8 @@ fun FootballScreen(
                     Box(Modifier.graphicsLayer { alpha = if (showChannels) 1f else 0f }) {
                         ChannelsTab(
                             brands, mostWatched, popular, allMatches, watch, health, minute, zone, is24Hour, accent, active && showChannels, first,
-                            onPlay = onPlayChannel, onHide = onHideChannel, onShowHidden = onShowHiddenChannels,
+                            restore = restore.takeIf { showChannels }, onRestored = restored,
+                            onPlay = playChannel, onHide = onHideChannel, onShowHidden = onShowHiddenChannels,
                         )
                     }
                 }
@@ -269,7 +290,8 @@ fun FootballScreen(
                                 MatchShelf(
                                     k, today.matches, firstResult = -1, today.upcoming, "No matches today",
                                     today.next?.let { "Next: ${dayName(it.kickoff, minute, zone)}" },
-                                    followed = emptySet(), chips, hasPlaylist, minute, zone, is24Hour, accent, active, focusable, onWatch,
+                                    followed = emptySet(), chips, hasPlaylist, minute, zone, is24Hour, accent, active, focusable,
+                                    restore.takeIf { shown }, restored, watchMatch,
                                 )
                             } else {
                                 val leagueDay = remember(shelfLeague, leagueMatches, minute) { LeaguePage.today(leagueMatches[shelfLeague.id].orEmpty(), minute, zone) }
@@ -279,7 +301,8 @@ fun FootballScreen(
                                 }
                                 MatchShelf(
                                     k, leagueDay.matches, leagueDay.firstResult, leagueDay.nextMatches, "No ${shelfLeague.name} today", next,
-                                    followed, chips, hasPlaylist, minute, zone, is24Hour, accent, active, focusable, onWatch,
+                                    followed, chips, hasPlaylist, minute, zone, is24Hour, accent, active, focusable,
+                                    restore.takeIf { shown }, restored, watchMatch,
                                 )
                             }
                             if (shown && !hasPlaylist) {
@@ -316,6 +339,10 @@ fun FootballScreen(
         }
     }
 }
+
+/** What was played, saved across the launcher being built again: a channel from "Channels", or a match's channel. */
+internal fun channelKey(channel: IptvChannel) = "channel:" + ChannelHealth.key(channel)
+internal fun matchKey(match: FootballMatch, channel: IptvChannel) = "match:${match.id}:${channel.url}"
 
 /** A match's ways to watch: [usable] feeds in the order to try them, and [providers], one per chip. */
 internal data class MatchChips(val usable: List<WatchOption>, val providers: List<Pair<String, WatchOption>>)

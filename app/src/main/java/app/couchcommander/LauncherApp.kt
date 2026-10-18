@@ -1,6 +1,9 @@
 package app.couchcommander
 
 import android.app.Application
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
 import android.util.Xml
 import app.couchcommander.data.ConfigRepository
 import app.couchcommander.data.apps.AppRepository
@@ -20,6 +23,12 @@ import app.couchcommander.data.media.MediaRepository
 import app.couchcommander.data.media.ContinueWatching
 import app.couchcommander.data.media.RemoteImages
 import app.couchcommander.data.media.TmdbAccount
+import app.couchcommander.remote.PairActivity
+import app.couchcommander.remote.Pairing
+import app.couchcommander.remote.RemoteApi
+import app.couchcommander.remote.RemoteLibrary
+import app.couchcommander.remote.RemoteServer
+import app.couchcommander.remote.RemoteTokens
 import app.media.MediaKind
 import app.media.TmdbAccountRepository
 import io.ktor.client.HttpClient
@@ -77,6 +86,9 @@ class AppContainer(app: Application) {
     val played = ContinueWatching(app.filesDir)
     /** The user's TMDB account (watchlist, favourites, ratings), signed in from a phone. */
     val tmdb = TmdbAccount(TmdbAccountRepository(http, BuildConfig.STORE_URL), KeystoreSessionStore(app.filesDir), scope)
+    /** Phones paired to play on the TV (see RemoteApi). */
+    val remoteTokens = RemoteTokens(app.filesDir)
+    val pairing = Pairing(remoteTokens)
     /** True while the Movies and TV page is on screen: its shelves are refreshed then if they're old. */
     val mediaPageOpen = MutableStateFlow(false)
 
@@ -177,5 +189,15 @@ class LauncherApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        startRemote()
+    }
+
+    /** Lets a paired phone (Garbled) play a title here: see RemoteApi. */
+    private fun startRemote() {
+        val name = { Settings.Global.getString(contentResolver, Settings.Global.DEVICE_NAME)?.takeIf { it.isNotBlank() } ?: Build.MODEL }
+        val api = RemoteApi(RemoteLibrary(this, container), container.pairing, container.remoteTokens, name) {
+            startActivity(Intent(this, PairActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+        RemoteServer(this, api, name).start()
     }
 }

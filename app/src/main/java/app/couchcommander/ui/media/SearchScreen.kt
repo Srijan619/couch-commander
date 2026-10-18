@@ -38,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -263,7 +264,7 @@ fun SearchScreen(
                     items(items, key = { it.key }) { result ->
                         val k = result.key
                         when (result) {
-                            is SearchResult.Title -> PosterTile(result.movie, active, requester(k), onFocused = { lastTile = k; hovered.value = result.movie }) {
+                            is SearchResult.Title -> PosterTile(result.movie, rememberUpdatedState(active), requester(k), onFocused = { lastTile = k; hovered.value = result.movie }) {
                                 keyboard?.hide()
                                 onTitleOpen(result.movie)
                             }

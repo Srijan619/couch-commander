@@ -3,4 +3,5 @@
 <full-backup-content>
     <exclude domain="file" path="iptv-source.bin" />
     <exclude domain="file" path="iptv.json" />
+    <exclude domain="file" path="remote-paired.json" />
 </full-backup-content>

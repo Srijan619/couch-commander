@@ -35,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -97,6 +98,9 @@ internal fun ChannelsTab(
     accent: Color,
     active: Boolean,
     first: FocusRequester,
+    /** The channel played before the launcher was built again (channelKey): it takes focus, then [onRestored]. */
+    restore: String? = null,
+    onRestored: () -> Unit = {},
     onPlay: (List<WatchAttempt>) -> Unit,
     onHide: (IptvChannel) -> Unit,
     onShowHidden: () -> Unit,
@@ -134,7 +138,7 @@ internal fun ChannelsTab(
     // Read only where focus asks, not in composition: [active] flips each time the tab shows or hides.
     val focusable = rememberUpdatedState(active)
 
-    var chosen by remember { mutableStateOf<String?>(null) }
+    var chosen by rememberSaveable { mutableStateOf<String?>(null) }
     // Each visit starts on the first entry: "On now" when a match is on.
     LaunchedEffect(active) { if (!active) chosen = null }
     val open = sections.firstOrNull { it.key == chosen } ?: sections.first()
@@ -145,6 +149,14 @@ internal fun ChannelsTab(
     // Each entry opens at the top of its channels.
     val gridScroll = remember(open.key) { ScrollState(0) }
     LaunchedEffect(active) { if (!active) menu = null }
+    val restorePick = restore?.let { r -> open.groups.firstNotNullOfOrNull { g -> g.picks.firstOrNull { channelKey(it.channel) == r } } }
+    val restoreFocus = remember { FocusRequester() }
+    LaunchedEffect(restorePick) {
+        if (restorePick == null) return@LaunchedEffect
+        withFrameNanos { }
+        runCatching { restoreFocus.requestFocus() }
+        onRestored()
+    }
 
     Box(Modifier.padding(top = 16.dp).fillMaxSize()) {
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -187,7 +199,7 @@ internal fun ChannelsTab(
                                     val key = ChannelHealth.key(pick.channel)
                                     GridTile(
                                         pick, live = guide[key]?.live == true, failed = ChannelHealth.rank(health[key], now) > 0,
-                                        accent, focusable, Modifier.weight(1f),
+                                        accent, focusable, Modifier.weight(1f).then(if (pick === restorePick) Modifier.focusRequester(restoreFocus) else Modifier),
                                         onFocused = { focused.value = pick },
                                         onHold = { menu = pick },
                                     ) { play(pick) }

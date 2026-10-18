@@ -30,6 +30,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -92,6 +93,9 @@ internal fun MatchShelf(
      * decided, so a kept, hidden shelf doesn't recompose as tabs switch.
      */
     active: State<Boolean>,
+    /** The match's channel played before the launcher was built again (matchKey): it takes focus, then [onRestored]. */
+    restore: String?,
+    onRestored: () -> Unit,
     onWatch: (FootballMatch, List<WatchAttempt>) -> Unit,
 ) {
     val quiet = matches.isEmpty()
@@ -99,7 +103,7 @@ internal fun MatchShelf(
     fun result(i: Int) = !quiet && firstResult >= 0 && i >= firstResult
     // Opens on the first match there is a channel for, else the first one still to come.
     val initial = shown.indices.firstOrNull { !result(it) && chips[shown[it].id] != null } ?: shown.indices.firstOrNull { !result(it) }
-    var open by remember(key) { mutableStateOf(initial?.let { shown[it].id }) }
+    var open by rememberSaveable(key) { mutableStateOf(initial?.let { shown[it].id }) }
     // Only a match opened by moving onto it takes focus; the one open as the tab opens leaves it on the tab.
     var moved by remember(key) { mutableStateOf(false) }
     LaunchedEffect(pageActive) { if (!pageActive) { open = initial?.let { shown[it].id }; moved = false } }
@@ -133,7 +137,10 @@ internal fun MatchShelf(
                     matchChips, showDay = quiet, now, zone, is24Hour,
                 )
                 if (open == m.id && !isResult) {
-                    OpenCard(poster, m, matchChips, hasPlaylist, accent, active, target, grab = moved, onWatch)
+                    OpenCard(
+                        poster, m, matchChips, hasPlaylist, accent, active, target, grab = moved,
+                        restoreUrl = restore?.takeIf { it.startsWith("match:${m.id}:") }?.substringAfter("match:${m.id}:"), onRestored, onWatch,
+                    )
                 } else {
                     ClosedPoster(poster, accent, active) { open = if (isResult) null else m.id; moved = true }
                 }
@@ -258,13 +265,18 @@ private fun OpenCard(
     active: State<Boolean>,
     target: FocusRequester,
     grab: Boolean,
+    /** The channel played from this card before the launcher was built again: it takes focus, then [onRestored]. */
+    restoreUrl: String?,
+    onRestored: () -> Unit,
     onWatch: (FootballMatch, List<WatchAttempt>) -> Unit,
 ) {
     val shape = RoundedCornerShape(POSTER_RADIUS)
-    var all by remember(match.id) { mutableStateOf(false) }
     val providers = chips?.providers.orEmpty()
+    // Opened to all of them when the channel played was one past the first few.
+    var all by remember(match.id) { mutableStateOf(restoreUrl != null && providers.take(OPEN_CHIPS).none { it.second.channel.url == restoreUrl }) }
     // The poster that had focus is gone; its first channel takes over. Likewise after "All N channels".
-    LaunchedEffect(match.id, all) { if (grab || all) { withFrameNanos { }; runCatching { target.requestFocus() } } }
+    LaunchedEffect(match.id, all) { if ((grab || all) && restoreUrl == null) { withFrameNanos { }; runCatching { target.requestFocus() } } }
+    val back = remember { FocusRequester() }
     val empty = providers.isEmpty()
     val interaction = remember { MutableInteractionSource() }
     Row(
@@ -311,8 +323,15 @@ private fun OpenCard(
                 }
             } else {
                 val shown = if (all) providers.take(MAX_EXPANDED) else providers.take(OPEN_CHIPS)
+                val restoreAt = if (restoreUrl == null) -1 else shown.indexOfFirst { it.second.channel.url == restoreUrl }
+                LaunchedEffect(restoreAt) {
+                    if (restoreAt < 0) return@LaunchedEffect
+                    withFrameNanos { }
+                    runCatching { (if (restoreAt == 0) target else back).requestFocus() }
+                    onRestored()
+                }
                 shown.forEachIndexed { i, (label, option) ->
-                    ChannelRow(label, option.channel, accent, active, focus = if (i == 0) target else null) {
+                    ChannelRow(label, option.channel, accent, active, focus = if (i == 0) target else if (i == restoreAt) back else null) {
                         onWatch(match, watchAttempts(chips!!, option))
                     }
                 }

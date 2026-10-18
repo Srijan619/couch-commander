@@ -72,6 +72,13 @@
             android:exported="false"
             android:theme="@style/Theme.CouchCommander.Player" />
 
+        <!-- The code a phone pairing to play on the TV asks for (see RemoteApi). -->
+        <activity
+            android:name=".remote.PairActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@style/Theme.CouchCommander.Overlay" />
+
         <!-- Opt-in Home button takeover for TVs that don't let you pick a home app (Google TV). -->
         <service
             android:name=".system.HomeButtonService"
