@@ -81,6 +81,10 @@ import app.couchcommander.domain.FootballPage
 import app.couchcommander.domain.FootballText
 import app.couchcommander.domain.LeaguePage
 import app.couchcommander.ui.Icons
+import app.couchcommander.ui.page.ActionPill
+import app.couchcommander.ui.page.RowCard
+import app.couchcommander.ui.page.TabPill
+import app.couchcommander.ui.page.rememberBlurred
 import app.couchcommander.ui.rememberClock
 import app.couchcommander.ui.theme.Palette
 import app.football.FootballBoard
@@ -200,7 +204,8 @@ fun FootballScreen(
         // translucent dim over it, cost the TV's GPU a full redraw every frame.
         backdrop?.let { Image(it, null, contentScale = ContentScale.Crop, filterQuality = FilterQuality.Low, modifier = Modifier.fillMaxSize()) }
 
-        Column(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 30.dp)) {
+        // The bottom padding keeps a long matchday's rows clear of the footer's hints.
+        Column(Modifier.fillMaxSize().padding(start = 48.dp, end = 48.dp, top = 30.dp, bottom = 52.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
                 Text("Football", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Text(
@@ -225,7 +230,7 @@ fun FootballScreen(
                 names.forEachIndexed { i, name ->
                     TabPill(name, i == selected, accent, active, tabFocus[i]) { tab = i }
                 }
-                ActionPill(Icons.Plus, null, accent, active, focus = null, modifier = Modifier.padding(start = 6.dp), onClick = onChooseLeagues)
+                ActionPill(Icons.Plus, null, accent, active, focus = null, modifier = Modifier.padding(start = 6.dp), description = "Choose leagues", onClick = onChooseLeagues)
             }
 
             if (showChannels) {
@@ -424,40 +429,6 @@ private fun LeagueRow(
     }
 }
 
-/** A tab on the football page: underlined in the accent while open, a white pill while focused. Focus opens it. */
-@Composable
-private fun TabPill(label: String, open: Boolean, accent: Color, active: Boolean, focus: FocusRequester, onOpen: () -> Unit) {
-    val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
-    LaunchedEffect(focused) { if (focused) onOpen() }
-    val shape = RoundedCornerShape(10.dp)
-    Column(
-        Modifier
-            .focusRequester(focus)
-            .scale(if (focused) 1.06f else 1f)
-            .then(if (focused) Modifier.shadow(16.dp, shape, ambientColor = accent, spotColor = accent) else Modifier)
-            .clip(shape)
-            .background(if (focused) Palette.White else Color.Transparent)
-            .focusProperties { canFocus = active }
-            .clickable(interactionSource = interaction, indication = null, role = Role.Tab, onClick = onOpen)
-            .padding(start = 12.dp, end = 12.dp, top = 7.dp, bottom = 4.dp)
-            // As wide as the label, so the underline below runs its full length.
-            .width(IntrinsicSize.Max),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(
-            label, fontSize = 15.sp, maxLines = 1,
-            fontWeight = if (open) FontWeight.Bold else FontWeight.SemiBold,
-            color = when {
-                focused -> Palette.Ink
-                open -> Palette.White
-                else -> Palette.Muted
-            },
-        )
-        Box(Modifier.padding(top = 3.dp).fillMaxWidth().height(2.dp).clip(CircleShape).background(if (open && !focused) accent else Color.Transparent))
-    }
-}
-
 @Composable
 private fun NothingToday(next: FootballMatch?, now: Instant, zone: ZoneId, is24Hour: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -588,38 +559,6 @@ private val TILE_GAP = 8.dp
 /** The tiles' column: three tiles and "+N", left-aligned and the same on every row, so each row's first tile starts on one line. */
 private val CHIPS_WIDTH = TILE_WIDTH * 3 + TILE_GAP * 3 + TILE_HEIGHT
 
-/** A row card's ground: brighter while something in it has focus, a touch brighter while its match is live. */
-private val CardGround = Color(0x0AFFFFFF)
-private val CardLive = Color(0x14FFFFFF)
-private val CardFocused = Color(0x24FFFFFF)
-
-/**
- * A match (or a brand of channels) as a rounded card, so the row being browsed stands out from the others while
- * focus moves through its tiles.
- */
-@Composable
-private fun RowCard(
-    live: Boolean,
-    modifier: Modifier = Modifier,
-    verticalAlignment: Alignment.Vertical = Alignment.CenterVertically,
-    padding: PaddingValues = PaddingValues(start = 18.dp, end = 12.dp, top = 9.dp, bottom = 9.dp),
-    content: @Composable RowScope.() -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    Row(
-        modifier
-            .fillMaxWidth()
-            .onFocusChanged { focused = it.hasFocus }
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (focused) CardFocused else if (live) CardLive else CardGround)
-            .heightIn(min = TILE_HEIGHT + 18.dp)
-            .padding(padding),
-        verticalAlignment = verticalAlignment,
-        horizontalArrangement = Arrangement.spacedBy(24.dp),
-        content = content,
-    )
-}
-
 /** A provider label as a tile's two lines: "Viaplay FI" → "Viaplay" over "FI · FHD". */
 private fun tileText(label: String, channel: IptvChannel): Pair<String, String> {
     val words = label.split(' ')
@@ -733,47 +672,3 @@ private val LogoEdge = Color(0x290B0B12)
 private const val MAX_ATTEMPTS = 6
 /** "+N" opens up to this many over two lines; more than that is noise. */
 private const val MAX_EXPANDED = 8
-
-/** A white-when-focused pill: a provider chip, "+N", "+" for leagues, and the "add your playlist" link. */
-@Composable
-private fun ActionPill(
-    icon: ImageVector?,
-    label: String?,
-    accent: Color,
-    active: Boolean,
-    focus: FocusRequester?,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
-    val shape = RoundedCornerShape(10.dp)
-    val fg = if (focused) Palette.Ink else Palette.White
-    Row(
-        modifier
-            .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
-            .scale(if (focused) 1.06f else 1f)
-            .then(if (focused) Modifier.shadow(16.dp, shape, ambientColor = accent, spotColor = accent) else Modifier)
-            .clip(shape)
-            .background(if (focused) Palette.White else Palette.Raised)
-            // Hidden off screen, nothing here may take focus (Right on home's last app would find it).
-            .focusProperties { canFocus = active }
-            .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        icon?.let { Icon(it, if (label == null) "Choose leagues" else null, tint = fg, modifier = Modifier.size(15.dp)) }
-        label?.let { Text(it, color = fg, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
-    }
-}
-
-/** The painting as a small, blurred and dimmed copy, made once per painting off the main thread. */
-@Composable
-private fun rememberBlurred(frame: ArtFrame?): ImageBitmap? {
-    val image = frame?.image
-    val blurred by produceState<ImageBitmap?>(null, image) {
-        value = image?.let { withContext(Dispatchers.Default) { Blur.small(it.asAndroidBitmap(), dim = 0.62f, ground = Palette.Ground.toArgb()).asImageBitmap() } }
-    }
-    return blurred
-}

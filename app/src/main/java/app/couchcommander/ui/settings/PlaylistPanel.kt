@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.couchcommander.data.iptv.IptvSource
 import app.couchcommander.data.iptv.IptvState
+import app.couchcommander.data.iptv.VodStatus
 import app.couchcommander.ui.PanelRow
 import app.couchcommander.ui.PanelSection
 import app.couchcommander.ui.theme.Bricolage
@@ -53,15 +54,18 @@ import java.net.URI
 import java.util.Date
 
 /**
- * The IPTV playlist behind Watch on the football page. Paste or type the link with the TV's keyboard (an M3U
- * URL, or an Xtream `get.php?username=…&password=…` link); only live sports channels are kept from it. The saved
- * link is never shown again, only its server's name: it holds the login.
+ * The IPTV playlist behind Watch on the football page and Play on the Movies & TV page. Paste or type the link
+ * with the TV's keyboard (an M3U URL, or an Xtream `get.php?username=…&password=…` link). Of its live channels
+ * only sports ones are kept; films and series come from an Xtream panel's catalogue. The saved link is never
+ * shown again, only its server's name: it holds the login.
  */
 @Composable
 fun PlaylistPanel(
     source: IptvSource?,
     state: IptvState,
     syncing: Boolean,
+    /** The panel's film and series catalogue. */
+    vod: VodStatus,
     accent: Color,
     onSave: (IptvSource) -> Unit,
     onSync: () -> Unit,
@@ -106,14 +110,14 @@ fun PlaylistPanel(
         ) {
             Text("IPTV playlist", fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 14.dp, bottom = 6.dp))
             Text(
-                "Add your playlist to watch your teams' matches from the football page. Only live sports channels are kept.",
+                "Add your playlist to watch your teams' matches on the football page, and films and series on the Movies & TV page. Of the live channels, only sports ones are kept.",
                 fontSize = 14.sp, color = Palette.Muted, modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 10.dp),
             )
 
             PanelSection("Status", accent)
             Text(
-                status(source, state, syncing, DateFormat.getTimeFormat(context)::format),
-                fontSize = 14.sp, color = if (state.error != null && !syncing) accent else Palette.White,
+                status(source, state, vod, syncing, DateFormat.getTimeFormat(context)::format),
+                fontSize = 14.sp, color = if ((state.error != null || vod.error != null) && !syncing && !vod.syncing) accent else Palette.White,
                 modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 6.dp),
             )
             if (source != null) {
@@ -164,8 +168,11 @@ private fun LinkField(value: String, onChange: (String) -> Unit, hint: String, a
     )
 }
 
-/** "Xtream · panel.example · 214 sports channels, synced 03:12"; the server name only, never the login. */
-private fun status(source: IptvSource?, s: IptvState, syncing: Boolean, time: (Date) -> String): String {
+/**
+ * "Xtream · panel.example", then "214 sports channels, 12 showing your teams, synced 03:12" and "8 400 films,
+ * 1 200 series, synced 03:15"; the server name only, never the login.
+ */
+private fun status(source: IptvSource?, s: IptvState, vod: VodStatus, syncing: Boolean, time: (Date) -> String): String {
     if (source == null) return "No playlist yet. Watch buttons appear once one is added."
     val kind = when (source) {
         is IptvSource.Xtream -> "Xtream · ${host(source.server)}"
@@ -178,6 +185,14 @@ private fun status(source: IptvSource?, s: IptvState, syncing: Boolean, time: (D
         "${s.sportsChannels} sports channels, ${s.channels.size} showing your teams, $synced",
         s.guideError,
         s.error?.let { "Last sync failed: $it" },
+        when {
+            source !is IptvSource.Xtream -> "Films and series need an Xtream playlist."
+            vod.syncing -> "Films and series: syncing…"
+            vod.syncedAtEpochMillis != null -> "%,d films, %,d series, synced %s".format(vod.movies, vod.series, time(Date(vod.syncedAtEpochMillis)))
+            vod.error == null -> "Films and series: not synced yet"
+            else -> null
+        },
+        vod.error?.takeIf { source is IptvSource.Xtream && !vod.syncing }?.let { "Films and series sync failed: $it" },
     )
     return lines.joinToString("\n")
 }

@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
  *     adb shell am broadcast -n app.couchcommander/.data.iptv.IptvSourceReceiver -a app.couchcommander.CLEAR_IPTV
  *     adb shell am broadcast -n app.couchcommander/.data.iptv.IptvSourceReceiver -a app.couchcommander.DEBUG_IPTV --es q dortmund [--ez probe true]
  *     adb shell am broadcast -n app.couchcommander/.data.iptv.IptvSourceReceiver -a app.couchcommander.DEBUG_IPTV --es play sportklub
+ *     adb shell am broadcast -n app.couchcommander/.data.iptv.IptvSourceReceiver -a app.couchcommander.DEBUG_IPTV --es vod dune [--ez sync true]
  *
  * Results go to logcat under the `Iptv` tag, without URLs.
  */
@@ -45,6 +46,19 @@ class IptvSourceReceiver : BroadcastReceiver() {
                         Log.i(TAG, "Playing ${channel.name}")
                         val attempt = WatchAttempt(Names.provider(channel, event = false), channel, event = false)
                         context.startActivity(PlayerActivity.intent(context, listOf(attempt), kickoff = null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                    return
+                }
+                // --es vod <name>: the film and series catalogue, and what in it has that in its name; --ez sync true fetches it first.
+                intent.getStringExtra("vod")?.let { name ->
+                    container.scope.launch {
+                        if (intent.getBooleanExtra("sync", false)) container.vod.refresh(container.iptvSource.source.value, java.time.Instant.now(), force = true)
+                        container.vod.probe(container.iptvSource.source.value).forEach { Log.i(TAG, "vod probe $it") }
+                        val found = container.vod.search(name)
+                        val s = container.vod.status.value
+                        Log.i(TAG, "vod: ${s.movies} films, ${s.series} series, synced ${s.syncedAtEpochMillis?.let { java.time.Instant.ofEpochMilli(it) } ?: "never"}${s.error?.let { "; failed: $it" }.orEmpty()}")
+                        found.forEach { Log.i(TAG, "${it.name} | ${it.category} | tmdb=${it.tmdb} | year=${it.year} | label=${VodNames.label(it)}") }
+                        Log.i(TAG, "-- end of vod report")
                     }
                     return
                 }

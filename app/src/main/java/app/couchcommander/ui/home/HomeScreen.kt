@@ -81,7 +81,7 @@ private val CaptionMaxWidth = 380.dp
  * Home, direction L from the designs: the painting fills the screen, the clock sits top left with the followed
  * teams' next match (or live score) opposite, and the apps wait in a dock below the bottom edge. Down or OK on the
  * "Apps" handle slides the dock up; Up or Back slides it away, and it hides by itself after [dockHideSeconds]
- * without a key press (0: never). Up while it is hidden opens settings, Right the football page.
+ * without a key press (0: never). Up while it is hidden opens settings, Right the football page, Left Movies and TV.
  */
 @Composable
 fun HomeScreen(
@@ -95,8 +95,12 @@ fun HomeScreen(
     onAppMenu: (TvApp) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenFootball: () -> Unit,
+    onOpenMovies: () -> Unit,
     dockHideSeconds: Int,
-    /** The dock stays up: Up opens settings and a Football tile ends the row, since there's no handle to press Right on. */
+    /**
+     * The dock stays up: Up opens settings, a Movies & TV tile starts the row and a Football tile ends it, since
+     * there's no handle to press Left or Right on.
+     */
     alwaysShowApps: Boolean = false,
 ) {
     val accent = Color(frame?.accent ?: Accent.FALLBACK)
@@ -179,6 +183,11 @@ fun HomeScreen(
             Column {
                 Text(clock.time, fontSize = 58.sp, fontWeight = FontWeight.Bold, letterSpacing = (-1.6).sp, lineHeight = 60.sp)
                 Text(clock.date, fontSize = 17.sp, fontWeight = FontWeight.Medium, color = Palette.Muted)
+                // What Left does from the handle, mirroring "More football" opposite; gone while the dock is up.
+                Row(Modifier.padding(top = 10.dp).graphicsLayer { alpha = 0.85f * (1f - dock) }, verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.ChevronLeft, contentDescription = null, tint = Palette.White, modifier = Modifier.size(15.dp))
+                    Text("Movies & TV", style = overArt, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
             football?.let {
                 Column(horizontalAlignment = Alignment.End) {
@@ -217,7 +226,7 @@ fun HomeScreen(
         }
 
         // "Apps ⌄" at the bottom centre while the dock is hidden; it holds focus then. Down or OK shows the dock,
-        // Up opens settings, Right the football page. With no apps on home it leads to settings instead.
+        // Up opens settings, Right the football page, Left Movies and TV. With no apps on home it leads to settings instead.
         Column(
             Modifier
                 .align(Alignment.BottomCenter)
@@ -231,6 +240,7 @@ fun HomeScreen(
                         KeyEvent.KEYCODE_DPAD_DOWN, in confirmKeys -> { -> showDock() }
                         KeyEvent.KEYCODE_DPAD_UP -> onOpenSettings
                         KeyEvent.KEYCODE_DPAD_RIGHT -> onOpenFootball
+                        KeyEvent.KEYCODE_DPAD_LEFT -> onOpenMovies
                         else -> return@onKeyEvent false
                     }
                     if (k.action == KeyEvent.ACTION_UP) action()
@@ -289,6 +299,9 @@ fun HomeScreen(
                     contentPadding = PaddingValues(horizontal = 48.dp, vertical = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(18.dp),
                 ) {
+                    if (alwaysShowApps) item(key = "couch:movies") {
+                        MoviesTile(accent, onOpenMovies, Modifier.focusProperties { canFocus = interactive && dockOpen })
+                    }
                     itemsIndexed(apps, key = { _, app -> app.key }) { _, app ->
                         AppTile(
                             app = app,

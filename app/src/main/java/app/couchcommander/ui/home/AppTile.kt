@@ -77,6 +77,21 @@ fun FootballTile(accent: Color, onClick: () -> Unit, modifier: Modifier = Modifi
     }
 }
 
+/** The first tile on an always-shown dock: opens Movies and TV, which Left on the "Apps" handle opens otherwise. */
+@Composable
+fun MoviesTile(accent: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Tile(
+        label = "Movies & TV", accent = accent, onClick = onClick, onLongClick = null, onFocused = {}, modifier = modifier,
+        background = Modifier.background(Palette.Raised),
+    ) {
+        Column(Modifier.fillMaxSize().padding(12.dp)) {
+            Spacer(Modifier.weight(1f))
+            Text("Movies & TV", color = Palette.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text("Trending this week", color = Palette.Muted, fontSize = 12.sp, maxLines = 1)
+        }
+    }
+}
+
 @Composable
 private fun Tile(
     label: String,

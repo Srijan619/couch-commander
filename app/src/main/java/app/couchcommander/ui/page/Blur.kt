@@ -1,4 +1,4 @@
-package app.couchcommander.ui.football
+package app.couchcommander.ui.page
 
 import android.graphics.Bitmap
 

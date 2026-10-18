@@ -34,6 +34,11 @@ import app.couchcommander.data.iptv.ChannelHealth
 import app.couchcommander.domain.Accent
 import app.couchcommander.player.PlayerActivity
 import app.couchcommander.ui.football.FootballScreen
+import app.couchcommander.ui.media.MediaScreen
+import app.couchcommander.data.iptv.Names
+import app.media.MediaKind
+import java.time.ZoneId
+import java.util.Locale
 import app.couchcommander.system.HomeButtonService
 import app.couchcommander.system.Screensaver
 import app.couchcommander.ui.rememberFootballLines
@@ -108,6 +113,7 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
     var choosingApps by rememberSaveable { mutableStateOf(false) }
     var teamsOpen by rememberSaveable { mutableStateOf(false) }
     var footballOpen by rememberSaveable { mutableStateOf(false) }
+    var moviesOpen by rememberSaveable { mutableStateOf(false) }
     var playlistOpen by rememberSaveable { mutableStateOf(false) }
     var leaguesOpen by rememberSaveable { mutableStateOf(false) }
 
@@ -118,6 +124,7 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
     val playlist by container.iptvSource.source.collectAsStateWithLifecycle()
     val iptvState by container.iptv.state.collectAsStateWithLifecycle()
     val syncing by container.iptv.syncing.collectAsStateWithLifecycle()
+    val vodStatus by container.vod.status.collectAsStateWithLifecycle()
     val channelHealth by container.channelHealth.records.collectAsStateWithLifecycle()
     // Nothing is on home until the user has picked, so the picker opens by itself on first run.
     val pickerOpen = choosingApps || !config.onboarded
@@ -132,6 +139,7 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
             settingsOpen = false
             teamsOpen = false
             footballOpen = false
+            moviesOpen = false
             playlistOpen = false
             leaguesOpen = false
             if (container.config.config.value.onboarded) choosingApps = false
@@ -148,7 +156,7 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
             .onPreviewKeyEvent { e ->
                 keyTick.intValue++
                 // The Menu key, on remotes that have one, toggles settings.
-                if (e.nativeKeyEvent.keyCode != KeyEvent.KEYCODE_MENU || menuFor != null || pickerOpen || teamsOpen || footballOpen || playlistOpen || leaguesOpen) return@onPreviewKeyEvent false
+                if (e.nativeKeyEvent.keyCode != KeyEvent.KEYCODE_MENU || menuFor != null || pickerOpen || teamsOpen || footballOpen || moviesOpen || playlistOpen || leaguesOpen) return@onPreviewKeyEvent false
                 if (e.nativeKeyEvent.action == KeyEvent.ACTION_UP) {
                     settingsOpen = !settingsOpen
                     if (!settingsOpen) focus(null)
@@ -163,21 +171,28 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
         val slide by animateFloatAsState(
             if (footballShown) 1f else 0f, tween(if (footballShown) 380 else 300, easing = FastOutSlowInEasing), label = "football",
         )
-        // Once the page has slid fully over home, home isn't drawn at all (alpha 0 skips its layer).
-        Box(Modifier.graphicsLayer { alpha = if (slide == 1f) 0f else 1f }) {
+        val moviesShown = moviesOpen && !pickerOpen
+        LaunchedEffect(moviesShown) { container.mediaPageOpen.value = moviesShown }
+        // 0: Movies and TV waits off the left edge, 1: it covers home.
+        val moviesSlide by animateFloatAsState(
+            if (moviesShown) 1f else 0f, tween(if (moviesShown) 380 else 300, easing = FastOutSlowInEasing), label = "movies",
+        )
+        // Once a page has slid fully over home, home isn't drawn at all (alpha 0 skips its layer).
+        Box(Modifier.graphicsLayer { alpha = if (slide == 1f || moviesSlide == 1f) 0f else 1f }) {
         HomeScreen(
             apps = visible,
             frame = frame,
             football = football,
             // The picker and the football page cover home; panning the hidden painting would only slow them down.
-            drift = idle && !pickerOpen && !footballOpen,
-            interactive = menuFor == null && !settingsOpen && !pickerOpen && !teamsOpen && !footballOpen && !playlistOpen && !leaguesOpen,
+            drift = idle && !pickerOpen && !footballOpen && !moviesOpen,
+            interactive = menuFor == null && !settingsOpen && !pickerOpen && !teamsOpen && !footballOpen && !moviesOpen && !playlistOpen && !leaguesOpen,
             focusRequest = focusRequest,
             onLaunch = container.apps::launch,
             onAppMenu = { menuFor = it.key },
             onOpenSettings = { settingsOpen = true },
             // With no teams followed there's nothing to show yet: pick some first.
             onOpenFootball = { if (config.footballTeams.isEmpty()) teamsOpen = true else footballOpen = true },
+            onOpenMovies = { moviesOpen = true },
             dockHideSeconds = config.dockHideSeconds,
             alwaysShowApps = config.alwaysShowApps,
         )
@@ -295,14 +310,44 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
             )
         }
 
+        // Kept composed while hidden, like the football page, so opening it is only a slide.
+        Box(
+            Modifier.graphicsLayer {
+                translationX = -size.width * (1f - moviesSlide)
+                alpha = if (moviesSlide == 0f) 0f else 1f
+            },
+        ) {
+            val movies by container.media.shelves(MediaKind.Movie).collectAsStateWithLifecycle()
+            val tv by container.media.shelves(MediaKind.Tv).collectAsStateWithLifecycle()
+            MediaScreen(
+                active = moviesShown,
+                frame = frame,
+                accent = accent,
+                movies = movies,
+                tv = tv,
+                media = container.media,
+                account = container.tmdb,
+                played = container.played,
+                country = remember { Names.homeCountry(ZoneId.systemDefault().id, Locale.getDefault().country) },
+                onClose = {
+                    moviesOpen = false
+                    focus(null)
+                },
+            )
+        }
+
         if (playlistOpen) {
             PlaylistPanel(
                 source = playlist,
                 state = iptvState,
                 syncing = syncing,
+                vod = vodStatus,
                 accent = accent,
                 onSave = container::setPlaylist,
-                onSync = { container.scope.launch { container.syncPlaylist() } },
+                onSync = {
+                    container.scope.launch { container.syncPlaylist() }
+                    container.scope.launch { container.vod.refresh(container.iptvSource.source.value, java.time.Instant.now(), force = true) }
+                },
                 onRemove = { container.setPlaylist(null) },
                 hiddenChannels = channelHealth.count { it.value.hidden },
                 onShowHidden = container.channelHealth::showHidden,

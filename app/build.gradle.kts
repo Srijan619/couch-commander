@@ -16,6 +16,8 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        // The TMDB proxy garbled uses (it holds the TMDB key), for the Movies and TV pages.
+        buildConfigField("String", "STORE_URL", "\"https://garbled-store.onrender.com/\"")
     }
 
     buildTypes {
@@ -30,6 +32,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -40,6 +43,11 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.kotlinx.serialization.json)
     implementation("app.football:football-core")
+    // The Movies and TV pages: TMDB lists, details, seasons and where to watch.
+    implementation("app.media:media-core")
+    implementation(libs.ktor.client.okhttp)
+    // The QR code for signing in to TMDB from a phone.
+    implementation(libs.zxing.core)
     // The IPTV player: raw MPEG-TS and HLS live streams.
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.hls)
@@ -55,4 +63,5 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.kxml2)
+    testImplementation(libs.ktor.client.mock)
 }

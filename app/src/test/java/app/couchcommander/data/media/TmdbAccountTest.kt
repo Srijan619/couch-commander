@@ -1,0 +1,123 @@
+package app.couchcommander.data.media
+
+import app.media.AccountList
+import app.media.MediaKind
+import app.media.TmdbAccountRepository
+import app.media.TmdbSession
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.MockEngineConfig
+import io.ktor.client.engine.mock.respond
+import io.ktor.client.engine.mock.respondError
+import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+
+class TmdbAccountTest {
+    private var approved = false
+    private var tokens = 0
+    private var offline = false
+    private val asked = mutableListOf<String>()
+
+    private class MemoryStore : SessionStore {
+        var saved: TmdbSession? = null
+        override suspend fun load() = saved
+        override suspend fun save(session: TmdbSession) { saved = session }
+        override suspend fun clear() { saved = null }
+    }
+
+    // On the test's scheduler, so its virtual clock also waits for the requests.
+    private fun TestScope.repo() = TmdbAccountRepository(
+        HttpClient(MockEngine(MockEngineConfig().apply { dispatcher = StandardTestDispatcher(testScheduler) }.apply { addHandler { request ->
+            val path = request.url.encodedPath.removePrefix("/")
+            asked += path
+            if (offline) return@addHandler respondError(HttpStatusCode.ServiceUnavailable)
+            when (path) {
+                "authentication/token/new" -> respond("""{"success": true, "request_token": "tok${++tokens}"}""")
+                // TMDB refuses a token nobody has approved yet.
+                "authentication/session/new" ->
+                    if (approved) respond("""{"success": true, "session_id": "sess"}""") else respondError(HttpStatusCode.Unauthorized)
+                "account" -> respond("""{"id": 42, "username": "me"}""")
+                "account/42/watchlist/movies" -> respond("""{"page": 1, "total_pages": 1, "total_results": 1, "results": [{"id": 1, "title": "Metropolis", "release_date": "1927-01-10"}]}""")
+                else -> respond("""{"page": 1, "total_pages": 1, "total_results": 0, "results": []}""")
+            }
+        } })),
+        "https://store.test",
+    )
+
+    private fun TestScope.account(store: SessionStore = MemoryStore()) =
+        TmdbAccount(repo(), store, backgroundScope, clock = { testScheduler.currentTime })
+
+    @Test
+    fun `shows a code without a redirect and signs in once the phone approves it`() = runTest {
+        val store = MemoryStore()
+        val account = account(store)
+        account.startSignIn()
+        runCurrent()
+        assertEquals(SignIn.Waiting("https://www.themoviedb.org/authenticate/tok1"), account.signIn.value)
+
+        advanceTimeBy(TmdbAccount.POLL_MS * 3)
+        assertNull(account.session.value)
+
+        approved = true
+        advanceTimeBy(TmdbAccount.POLL_MS + 1)
+        assertEquals(TmdbSession("sess", 42, "me"), account.session.value)
+        assertEquals(SignIn.Idle, account.signIn.value)
+        assertEquals("sess", store.saved?.sessionId)
+        assertEquals(listOf("Metropolis"), account.lists(MediaKind.Movie).value[AccountList.Watchlist]?.map { it.title })
+    }
+
+    @Test
+    fun `reopening the panel shows the same code until it nearly expires`() = runTest {
+        val account = account()
+        account.startSignIn()
+        runCurrent()
+        account.stopSignIn()
+        account.startSignIn()
+        runCurrent()
+        assertEquals(SignIn.Waiting("https://www.themoviedb.org/authenticate/tok1"), account.signIn.value)
+
+        advanceTimeBy(TmdbAccount.TOKEN_REUSE_MS + TmdbAccount.POLL_MS)
+        assertEquals(SignIn.Waiting("https://www.themoviedb.org/authenticate/tok2"), account.signIn.value)
+    }
+
+    @Test
+    fun `stops checking once the panel closes`() = runTest {
+        val account = account()
+        account.startSignIn()
+        runCurrent()
+        account.stopSignIn()
+        val before = asked.size
+        advanceTimeBy(TmdbAccount.POLL_MS * 10)
+        assertEquals(before, asked.size)
+    }
+
+    @Test
+    fun `offline, it says so instead of showing a code`() = runTest {
+        offline = true
+        val account = account()
+        account.startSignIn()
+        runCurrent()
+        assertEquals(SignIn.Offline, account.signIn.value)
+    }
+
+    @Test
+    fun `signing out forgets the session and the shelves`() = runTest {
+        val store = MemoryStore().apply { saved = TmdbSession("sess", 42, "me") }
+        val account = account(store)
+        account.load()
+        account.refreshLists(MediaKind.Movie)
+        account.signOut()
+        runCurrent()
+        assertNull(account.session.value)
+        assertNull(store.saved)
+        assertEquals(emptyMap(), account.lists(MediaKind.Movie).value)
+        assertEquals("authentication/session", asked.last())
+    }
+}

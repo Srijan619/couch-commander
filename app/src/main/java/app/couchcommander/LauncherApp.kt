@@ -13,7 +13,18 @@ import app.couchcommander.data.iptv.IptvSource
 import app.couchcommander.data.iptv.IptvState
 import app.couchcommander.data.iptv.IptvSourceStore
 import app.couchcommander.data.iptv.WatchFinder
+import app.couchcommander.data.iptv.VodRepository
 import app.couchcommander.data.iptv.WatchOption
+import app.couchcommander.data.media.KeystoreSessionStore
+import app.couchcommander.data.media.MediaRepository
+import app.couchcommander.data.media.ContinueWatching
+import app.couchcommander.data.media.RemoteImages
+import app.couchcommander.data.media.TmdbAccount
+import app.media.MediaKind
+import app.media.TmdbAccountRepository
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.HttpTimeout
 import app.football.FootballRepository
 import app.football.FootballTeam
 import app.football.LeagueRepository
@@ -49,8 +60,25 @@ class AppContainer(app: Application) {
     val inputs = InputRepository(app)
     val iptvSource = IptvSourceStore(app.filesDir)
     val iptv = IptvRepository(app.filesDir, newParser = { Xml.newPullParser() })
+    /** The panel's films and series, for Play on the Movies and TV page. */
+    val vod = VodRepository(app.filesDir)
     val channelHealth = ChannelHealthStore(app.filesDir)
     val logos = ChannelLogos(app.cacheDir)
+    /** The proxy sleeps when idle and can take a minute to answer the first request after. */
+    private val http = HttpClient(OkHttp) {
+        install(HttpTimeout) {
+            requestTimeoutMillis = 60_000
+            connectTimeoutMillis = 15_000
+        }
+    }
+    val media = MediaRepository(app.filesDir, http, BuildConfig.STORE_URL)
+    val images = RemoteImages(app.cacheDir)
+    /** Films and series played lately, for the Movies and TV page's Continue shelf. */
+    val played = ContinueWatching(app.filesDir)
+    /** The user's TMDB account (watchlist, favourites, ratings), signed in from a phone. */
+    val tmdb = TmdbAccount(TmdbAccountRepository(http, BuildConfig.STORE_URL), KeystoreSessionStore(app.filesDir), scope)
+    /** True while the Movies and TV page is on screen: its shelves are refreshed then if they're old. */
+    val mediaPageOpen = MutableStateFlow(false)
 
     /** Where each upcoming match of a followed team or league is on, by match id; empty without a playlist. */
     val watch: StateFlow<Map<Long, List<WatchOption>>> =
@@ -78,6 +106,19 @@ class AppContainer(app: Application) {
         iptv.refresh(iptvSource.source.value, (config.config.value.footballTeams + leagues.teams.value).distinctBy { it.id }, Instant.now(), force = true)
 
     init {
+        // Both pages' shelves at start and each time the page opens or closes; the repository only fetches them
+        // when they're more than a few hours old.
+        scope.launch {
+            mediaPageOpen.collect { MediaKind.entries.forEach { kind -> launch { media.refresh(kind, Instant.now()) } } }
+        }
+        // The account's watchlist and favourites each time the page opens while signed in (a phone or another app
+        // may have changed them), and as soon as the saved session is read.
+        scope.launch {
+            tmdb.load()
+            combine(mediaPageOpen, tmdb.session) { open, session -> open && session != null }.collectLatest { refresh ->
+                if (refresh) MediaKind.entries.forEach { kind -> launch { tmdb.refreshLists(kind) } }
+            }
+        }
         // Checks once a minute; the repository only goes to the network when something is due (fixtures every few
         // hours, the live score each minute while a match is on), so this costs nothing between matches.
         scope.launch {
@@ -107,6 +148,16 @@ class AppContainer(app: Application) {
             combine(iptvSource.source, guideTeams) { source, t -> source to t }.collectLatest { (source, t) ->
                 while (true) {
                     iptv.refresh(source, t, Instant.now())
+                    if (source == null) break
+                    delay(IPTV_TICK_MS)
+                }
+            }
+        }
+        // The film and series catalogue once a day; it only changes with the playlist, not with the teams.
+        scope.launch {
+            iptvSource.source.collectLatest { source ->
+                while (true) {
+                    vod.refresh(source, Instant.now())
                     if (source == null) break
                     delay(IPTV_TICK_MS)
                 }
