@@ -264,6 +264,22 @@ class VodPlayerActivity : ComponentActivity() {
             prepare()
         }
         queueNext(play)
+        nameEpisode(play)
+    }
+
+    /**
+     * TMDB's name for [play]'s episode, for the heading and Continue: the panel's is often generic ("Épisode 1")
+     * or its file's name, and only the title page's episode rows knew TMDB's. Cached, so asking again is free.
+     */
+    private fun nameEpisode(play: VodPlay) {
+        val season = play.season ?: return
+        val number = play.episode ?: return
+        lifecycleScope.launch {
+            val name = container.media.episodes(play.title, season)?.firstOrNull { it.number == number }?.title?.takeIf { it.isNotBlank() } ?: return@launch
+            if (current.streamId != play.streamId || current.episodeTitle == name) return@launch
+            current = current.copy(episodeTitle = name)
+            heading.text = headingText()
+        }
     }
 
     private fun source(play: VodPlay): MediaSource {
@@ -346,9 +362,11 @@ class VodPlayerActivity : ComponentActivity() {
     }
 
     private fun showHeading() {
-        heading.text = listOfNotNull(current.title.title, current.episodeLine, current.version.takeIf { it.isNotBlank() }).joinToString("  ·  ")
+        heading.text = headingText()
         heading.visibility = View.VISIBLE
     }
+
+    private fun headingText() = listOfNotNull(current.title.title, current.episodeLine, current.version.takeIf { it.isNotBlank() }).joinToString("  ·  ")
 
     /** The end with no next episode: the title leaves Continue, unless it's a series whose next couldn't be looked up. */
     private fun ended() {

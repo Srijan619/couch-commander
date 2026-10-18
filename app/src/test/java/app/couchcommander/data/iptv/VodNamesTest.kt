@@ -62,5 +62,8 @@ class VodNamesTest {
         assertEquals("Pilot", VodNames.episodeTitle("Friends - S01E01 - Pilot"))
         assertEquals("The One Where", VodNames.episodeTitle("Friends S01 E02: The One Where"))
         assertEquals("Pilot", VodNames.episodeTitle(" Pilot "))
+        assertEquals("", VodNames.episodeTitle("Épisode 1"))
+        assertEquals("", VodNames.episodeTitle("MobLand - S01E01 - Episode 1"))
+        assertEquals("Episode of the Year", VodNames.episodeTitle("Episode of the Year"))
     }
 }

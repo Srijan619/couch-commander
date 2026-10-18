@@ -10,6 +10,7 @@ import app.couchcommander.data.iptv.XtreamVod
 import app.couchcommander.player.LivePlayback
 import app.couchcommander.player.VodPlay
 import app.couchcommander.player.VodPlayerActivity
+import app.couchcommander.ui.media.resumePlay
 import app.media.MediaKind
 import app.media.MovieDetails
 
@@ -32,10 +33,19 @@ class RemoteLibrary(private val context: Context, private val container: AppCont
     override suspend fun play(request: PlayRequest): Result<Played> = runCatching {
         val src = container.iptvSource.source.value as? IptvSource.Xtream ?: throw RemoteFailure(503, "No Xtream playlist on the TV")
         val title = details(request.ref, needFull = true)
+        val watching = container.played.get(title)
+        // Carrying on from Continue, as OK on its card does: the very stream that played, not a version looked up
+        // again by its label, which can read differently after a catalogue sync and land on a broken one.
+        watching?.takeIf { w ->
+            request.startMs == null && (request.version == null || request.version == w.version) &&
+                (request.season == null || (request.season == w.season && request.episode == w.episode))
+        }?.let { resumePlay(container, it) }?.let { play ->
+            context.startActivity(VodPlayerActivity.intent(context, play).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
+            return@runCatching Played(title.title, play.version, play.season, play.episode, play.startMs)
+        }
         val versions = container.vod.find(title)
         if (versions.isEmpty()) throw RemoteFailure(404, "Not on the panel")
         val labels = VodNames.labels(versions)
-        val watching = container.played.get(title)
         // The version asked for, else the one played last, else the best.
         val at = labels.indexOf(request.version).takeIf { it >= 0 } ?: labels.indexOf(watching?.version).takeIf { it >= 0 } ?: 0
         val entry = versions[at]

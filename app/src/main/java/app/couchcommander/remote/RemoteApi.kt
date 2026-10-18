@@ -1,6 +1,8 @@
 package app.couchcommander.remote
 
 import app.media.MediaKind
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -48,7 +50,8 @@ data class ContinueItem(
 
 /** What the TV's player has on screen, for a phone's widget: [item] is null when nothing plays; [playing] is false once paused. */
 @Serializable
-data class Now(val playing: Boolean = false, val item: ContinueItem? = null)
+@OptIn(ExperimentalSerializationApi::class)
+data class Now(@EncodeDefault val playing: Boolean = false, val item: ContinueItem? = null)
 
 @Serializable
 data class Played(val title: String, val version: String, val season: Int? = null, val episode: Int? = null, val startMs: Long = 0)

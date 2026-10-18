@@ -69,11 +69,13 @@ object VodNames {
      * has none, "Friends - S01E01 - Pilot" is "Pilot". A title without an "S01E01" is kept as it is.
      */
     fun episodeTitle(raw: String): String {
-        val m = EPISODE_CODE.find(raw) ?: return raw.trim()
-        return raw.substring(m.range.last + 1).trim { it.isWhitespace() || it in "-–—:|." }
+        val name = EPISODE_CODE.find(raw)?.let { raw.substring(it.range.last + 1).trim { c -> c.isWhitespace() || c in "-–—:|." } } ?: raw.trim()
+        // "Episode 1", "Épisode 1", "Folge 1": a number, not a name.
+        return if (GENERIC_EPISODE.matches(name)) "" else name
     }
 
     private val EPISODE_CODE = Regex("""(?i)\bS\d{1,2}\s*E\d{1,3}\b""")
+    private val GENERIC_EPISODE = Regex("""(?iu)(episode|épisode|episodio|episódio|epizoda|epizod|aflevering|folge|odcinek|avsnitt|afsnit|jakso|bölüm|серия|ep\.?|e)\s*\d{1,4}""")
 
     /** Each version's chip label, numbered where two would read the same. */
     fun labels(versions: List<VodEntry>): List<String> {
