@@ -6,7 +6,12 @@ import app.media.MovieCache
 import app.media.MovieDetails
 import app.media.MovieRepository
 import app.media.MovieSort
+import app.media.PersonDetails
+import app.media.SearchPage
+import app.media.SearchScope
 import app.media.TitleExtras
+import app.media.TmdbPeople
+import app.media.TmdbSearch
 import io.ktor.client.HttpClient
 import java.io.File
 import java.time.Duration
@@ -38,7 +43,7 @@ data class Shelves(val rows: Map<Shelf, List<MovieDetails>> = emptyMap(), val fe
 /**
  * Films and series from TMDB (media-core, through the garbled-store proxy) for the Movies and TV pages: each
  * page's shelves kept on disk so they show at once, refreshed when older than [MAX_AGE]. A title's details,
- * where to watch and episodes are kept in memory for the session.
+ * where to watch and episodes are kept in memory for the session. Search asks TMDB each time.
  */
 class MediaRepository(private val dir: File, client: HttpClient, baseUrl: String) {
     // Before the states: reading the files on disk needs it.
@@ -46,6 +51,8 @@ class MediaRepository(private val dir: File, client: HttpClient, baseUrl: String
     private val repos = MediaKind.entries.associateWith { kind -> MovieRepository(client, baseUrl, ids = emptyList(), cache = NoCache, kind = kind) }
     private val states = MediaKind.entries.associateWith { kind -> MutableStateFlow(read(kind)) }
     private val refreshing = MediaKind.entries.associateWith { Mutex() }
+    private val searcher = TmdbSearch(client, baseUrl)
+    private val people = TmdbPeople(client, baseUrl)
 
     private val details = Lru<MovieDetails>(64)
     private val extras = Lru<TitleExtras>(32)
@@ -100,6 +107,12 @@ class MediaRepository(private val dir: File, client: HttpClient, baseUrl: String
         episodes.get(key)?.let { return it }
         return repos.getValue(title.kind).episodes(title.id, season)?.also { episodes.put(key, it) }
     }
+
+    /** Page [page] of TMDB's results for [query]: films, series and people, most relevant first; null when offline. */
+    suspend fun search(query: String, scope: SearchScope, page: Int): SearchPage? = searcher.search(query, scope, page)
+
+    /** Someone's films and series, from a person in the search results; null when offline. */
+    suspend fun person(id: Int): PersonDetails? = people.details(id)
 
     @Serializable
     private class ShelfFile(val fetchedAt: Long, val rows: Map<String, List<MovieDetails>>)

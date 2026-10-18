@@ -41,8 +41,11 @@ object XtreamVod {
     fun seriesUrl(s: IptvSource.Xtream) = api(s) + "&action=get_series"
     fun seriesInfoUrl(s: IptvSource.Xtream, seriesId: String) = api(s) + "&action=get_series_info&series_id=" + enc(seriesId)
 
-    fun movieStreamUrl(s: IptvSource.Xtream, e: VodEntry) = "${s.server}/movie/${enc(s.username)}/${enc(s.password)}/${e.id}.${e.ext}"
-    fun episodeStreamUrl(s: IptvSource.Xtream, e: VodEpisode) = "${s.server}/series/${enc(s.username)}/${enc(s.password)}/${e.id}.${e.ext}"
+    fun movieStreamUrl(s: IptvSource.Xtream, e: VodEntry) = movieStreamUrl(s, e.id, e.ext)
+    fun episodeStreamUrl(s: IptvSource.Xtream, e: VodEpisode) = episodeStreamUrl(s, e.id, e.ext)
+    /** By stream id and container, as Continue watching keeps them. */
+    fun movieStreamUrl(s: IptvSource.Xtream, id: String, ext: String) = "${s.server}/movie/${enc(s.username)}/${enc(s.password)}/$id.$ext"
+    fun episodeStreamUrl(s: IptvSource.Xtream, id: String, ext: String) = "${s.server}/series/${enc(s.username)}/${enc(s.password)}/$id.$ext"
 
     private fun api(s: IptvSource.Xtream) = "${s.server}/player_api.php?username=${enc(s.username)}&password=${enc(s.password)}"
     private fun enc(v: String) = URLEncoder.encode(v, "UTF-8").replace("+", "%20")

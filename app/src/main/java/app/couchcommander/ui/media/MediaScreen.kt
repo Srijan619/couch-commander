@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -45,18 +46,22 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.couchcommander.LauncherApp
 import app.couchcommander.data.art.ArtFrame
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.couchcommander.data.media.MediaRepository
+import app.couchcommander.data.media.MediaSearch
 import app.couchcommander.data.media.ContinueWatching
 import app.couchcommander.data.media.Watching
 import app.couchcommander.data.media.TmdbAccount
 import app.couchcommander.data.media.Shelf
 import app.couchcommander.data.media.Shelves
+import app.couchcommander.player.VodPlayerActivity
 import app.couchcommander.ui.Icons
 import app.couchcommander.ui.page.ActionPill
 import app.couchcommander.ui.page.RowCard
@@ -67,7 +72,10 @@ import app.couchcommander.ui.theme.Palette
 import app.media.AccountList
 import app.media.MediaKind
 import app.media.MovieDetails
+import app.media.SearchScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collectLatest
 
 /**
@@ -76,8 +84,10 @@ import kotlinx.coroutines.flow.collectLatest
  * Continue (what was played, as wide cards with progress), the account's lists and what's trending; Movies and TV
  * are for browsing one kind. The hero shows the focused title's still, name and plot, its trailer playing muted
  * once focus rests on it. OK on a poster opens its page over this one, and "More like this" there opens the next
- * on top, so Back walks back through them. Back from the shelves goes home. The account pill at the end of the
- * tabs signs in to TMDB from a phone; signed in, the watchlist and favourites come before TMDB's lists.
+ * on top, so Back walks back through them; OK on a Continue card plays it from where it was left, without the
+ * page in between. Back from the shelves goes home. The account pill at the end of the
+ * tabs signs in to TMDB from a phone; signed in, the watchlist and favourites come before TMDB's lists. The search
+ * pill before it opens [SearchScreen] over the shelves, starting on the open tab's kind.
  */
 // LocalBringIntoViewSpec: the standard way to pin focus on TV, still marked experimental.
 @OptIn(ExperimentalFoundationApi::class)
@@ -127,9 +137,24 @@ fun MediaScreen(
     val accountFocus = remember { FocusRequester() }
     // Closing the panel puts focus back on the pill, not on the shelves.
     var backToAccount by remember { mutableStateOf(false) }
+    val searchScope = rememberCoroutineScope()
+    val search = remember(media) { MediaSearch(searchScope, media::search, media::person) }
+    var searchOpen by remember { mutableStateOf(false) }
+    val searchFocus = remember { FocusRequester() }
+    var backToSearch by remember { mutableStateOf(false) }
 
     // The titles opened from the shelves, the one on screen last.
     var opened by remember { mutableStateOf(listOf<MovieDetails>()) }
+    val context = LocalContext.current
+    // OK on a Continue card plays it at once; a second press while it starts does nothing.
+    var resuming by remember { mutableStateOf<Job?>(null) }
+    fun resume(left: Watching) {
+        if (resuming?.isActive == true) return
+        resuming = searchScope.launch {
+            val play = resumePlay((context.applicationContext as LauncherApp).container, left)
+            if (play != null) VodPlayerActivity.start(context, play) else opened = listOf(left.title)
+        }
+    }
     // Where focus was on the shelves, to go back to when the last page closes.
     val posterFocus = remember { HashMap<String, FocusRequester>() }
     fun requester(key: String) = posterFocus.getOrPut(key) { FocusRequester() }
@@ -157,14 +182,16 @@ fun MediaScreen(
             opened = emptyList()
             lastPoster = null
             accountOpen = false
+            searchOpen = false
             // Each visit opens on Home.
             tab = 0
         }
     }
     LaunchedEffect(accountOpen && active) { if (accountOpen && active) account.startSignIn() else account.stopSignIn() }
 
-    val shelvesActive = active && opened.isEmpty() && !accountOpen
-    BackHandler(enabled = active && opened.isEmpty(), onBack = onClose)
+    val shelvesActive = active && opened.isEmpty() && !accountOpen && !searchOpen
+    // The search has its own Back while it's on top.
+    BackHandler(enabled = active && opened.isEmpty() && !searchOpen, onBack = onClose)
     BackHandler(enabled = active && opened.isNotEmpty()) { opened = opened.dropLast(1) }
 
     // Focus on the open tab when the page opens, and back on the poster when the last title page closes.
@@ -174,6 +201,10 @@ fun MediaScreen(
         if (backToAccount) {
             backToAccount = false
             if (runCatching { accountFocus.requestFocus() }.isSuccess) return@LaunchedEffect
+        }
+        if (backToSearch) {
+            backToSearch = false
+            if (runCatching { searchFocus.requestFocus() }.isSuccess) return@LaunchedEffect
         }
         val target = lastPoster?.let { posterFocus[it] } ?: tabFocus[tab]
         runCatching { target.requestFocus() }.onFailure { runCatching { tabFocus[tab].requestFocus() } }
@@ -213,6 +244,13 @@ fun MediaScreen(
                 }
             }
                 ActionPill(
+                    Icons.Search, null, accent, shelvesActive, searchFocus,
+                    modifier = Modifier.padding(end = 8.dp), description = "Search",
+                ) {
+                    search.reset(when (kind) { null -> SearchScope.All; MediaKind.Movie -> SearchScope.Movies; MediaKind.Tv -> SearchScope.Tv })
+                    searchOpen = true
+                }
+                ActionPill(
                     Icons.Person, session?.username ?: "Sign in", accent, shelvesActive, accountFocus,
                     modifier = Modifier.padding(end = 18.dp), description = "TMDB account",
                 ) { accountOpen = true }
@@ -249,7 +287,7 @@ fun MediaScreen(
                                     val k = key(tab, row.id, title)
                                     val left = row.continued[title.ref]
                                     if (left != null) {
-                                        ContinueTile(left, shelvesActive, requester(k), onFocused = { lastPoster = k; hovered.value = title }) { opened = listOf(title) }
+                                        ContinueTile(left, shelvesActive, requester(k), onFocused = { lastPoster = k; hovered.value = title }) { resume(left) }
                                     } else {
                                         PosterTile(title, shelvesActive, requester(k), onFocused = { lastPoster = k; hovered.value = title }) {
                                             opened = listOf(title)
@@ -269,7 +307,7 @@ fun MediaScreen(
             if (rows.isNotEmpty()) {
                 Icon(if (inTabs) Icons.ChevronDown else Icons.ArrowUp, null, tint = Palette.Muted, modifier = Modifier.size(14.dp))
                 Text(
-                    if (inTabs) "Down: titles" else "Up: Home, Movies, TV, account",
+                    if (inTabs) "Down: titles" else "Up: Home, Movies, TV, search, account",
                     fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Palette.Muted, modifier = Modifier.padding(start = 4.dp, end = 16.dp),
                 )
             }
@@ -281,7 +319,22 @@ fun MediaScreen(
             modifier = Modifier.align(Alignment.BottomEnd).padding(end = 48.dp, bottom = 18.dp),
         )
 
-        // The open title covers the shelves; only the top one is drawn.
+        if (searchOpen && active) {
+            SearchScreen(
+                search = search,
+                active = opened.isEmpty(),
+                backdrop = backdrop,
+                accent = accent,
+                media = media,
+                onTitleOpen = { opened = listOf(it) },
+                onClose = {
+                    backToSearch = true
+                    searchOpen = false
+                },
+            )
+        }
+
+        // The open title covers the shelves and the search; only the top one is drawn.
         opened.lastOrNull()?.let { title ->
             TitleScreen(
                 title = title,

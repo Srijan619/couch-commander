@@ -38,6 +38,9 @@ object Icons {
     /** The TMDB account on the Movies and TV page. */
     val Person: ImageVector = stroke("person", "M8 8a4 4 0 1 0 8 0a4 4 0 1 0-8 0", "M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7")
 
+    /** Search on the Movies and TV page: a magnifier. */
+    val Search: ImageVector = stroke("search", "M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0", "M20 20l-4-4")
+
     /** On the watchlist, a favourite: done. */
     val Check: ImageVector = stroke("check", "M5 12.5l4.5 4.5L19 7")
 
