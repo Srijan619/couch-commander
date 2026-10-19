@@ -176,18 +176,35 @@ fun FootballScreen(
     // Set only when built again with something played: the channel (or match's channel) it names takes focus.
     var restore by remember { mutableStateOf(played) }
     LaunchedEffect(active) { if (!active) { tab = -1; played = null } }
-    val selected = if (tab < 0) mine else tab.coerceAtMost(names.lastIndex)
+    val selected = remember(tab, names.size) {
+        derivedStateOf { if (tab < 0) mine else tab.coerceAtMost(names.lastIndex) }
+    }
     val tabFocus = remember(names.size) { List(names.size) { FocusRequester() } }
-    val showChannels = hasPlaylist && selected == 0
+    val showChannels = remember(hasPlaylist, selected) {
+        derivedStateOf { hasPlaylist && selected.value == 0 }
+    }
     var channelsBuilt by remember { mutableStateOf(false) }
-    LaunchedEffect(showChannels) { if (showChannels) channelsBuilt = true }
-    val league = leagues.getOrNull(selected - mine - 1)
+    LaunchedEffect(showChannels.value) { if (showChannels.value) channelsBuilt = true }
+    val league = remember(selected, leagues) {
+        derivedStateOf { leagues.getOrNull(selected.value - mine - 1) }
+    }
     // The match tab on screen ("mine" or "league-<id>"), and the ones visited this time, kept composed while hidden.
-    val shelfKey = when { showChannels -> null; league == null -> "mine"; else -> "league-${league.id}" }
+    val shelfKey = remember(showChannels, league) {
+        derivedStateOf {
+            when {
+                showChannels.value -> null
+                league.value == null -> "mine"
+                else -> "league-${league.value!!.id}"
+            }
+        }
+    }
     val visitedShelves = remember { mutableStateListOf<String>() }
-    LaunchedEffect(shelfKey) { if (shelfKey != null && shelfKey !in visitedShelves) visitedShelves += shelfKey }
+    LaunchedEffect(shelfKey.value) {
+        val key = shelfKey.value
+        if (key != null && key !in visitedShelves) visitedShelves.add(key)
+    }
     val day = remember(league, leagueMatches) {
-        derivedStateOf<LeaguePage.Day?> { league?.let { LeaguePage.today(leagueMatches[it.id].orEmpty(), minute.value, zone) } }
+        derivedStateOf<LeaguePage.Day?> { league.value?.let { LeaguePage.today(leagueMatches[it.id].orEmpty(), minute.value, zone) } }
     }
     // The Channels tab marks the channels showing any of these, and lists them under "On now" in the tabs' order:
     // the followed teams', then each league's as its tab comes, by kickoff within each.
@@ -212,7 +229,7 @@ fun FootballScreen(
         derivedStateOf {
             when {
                 !hasPlaylist -> true
-                showChannels -> brands.isNotEmpty() || mostWatched.isNotEmpty()
+                showChannels.value -> brands.isNotEmpty() || mostWatched.isNotEmpty()
                 day.value == null -> today.value.matches.isNotEmpty() || today.value.upcoming.isNotEmpty()
                 else -> day.value?.matches?.isNotEmpty() == true || day.value?.nextMatches?.isNotEmpty() == true
             }
@@ -234,7 +251,7 @@ fun FootballScreen(
             restore = null
         }
         // On the open tab ("My teams"), not on a match's first channel: one OK too many would start a stream.
-        runCatching { tabFocus[selected].requestFocus() }
+        runCatching { tabFocus[selected.value].requestFocus() }
     }
     val playChannel = remember(onPlayChannel) {
         { attempts: List<WatchAttempt> -> played = attempts.firstOrNull()?.let { channelKey(it.channel) }; onPlayChannel(attempts) }
@@ -266,7 +283,7 @@ fun FootballScreen(
                     // Many leagues run past the edge; focusing a tab scrolls it into view.
                     .horizontalScroll(rememberScrollState())
                     // Up from anywhere in the list lands on the open tab, not on whichever tab sits above.
-                    .focusProperties { onEnter = { tabFocus[selected].requestFocus() } }
+                    .focusProperties { onEnter = { tabFocus[selected.value].requestFocus() } }
                     .onFocusChanged { inTabs = it.hasFocus }
                     .focusGroup(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -274,7 +291,7 @@ fun FootballScreen(
             ) {
                 names.forEachIndexed { i, name ->
                     key(i) {
-                        val isSelected = remember(selected) { i == selected }
+                        val isSelected = remember(selected) { i == selected.value }
                         TabPill(name, isSelected, accent, active, tabFocus[i]) {
                             if (tab != i) tab = i
                         }
@@ -288,17 +305,17 @@ fun FootballScreen(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 // Always keep ChannelsTab composed if it's been built, just hide it with alpha.
                 if (hasPlaylist && channelsBuilt) {
-                    Box(Modifier.graphicsLayer { alpha = if (showChannels) 1f else 0f }) {
+                    Box(Modifier.graphicsLayer { alpha = if (showChannels.value) 1f else 0f }) {
                         ChannelsTab(
-                            brands, mostWatched, popular, allMatches, watch, health, minute.value, zone, is24Hour, accent, active && showChannels, first,
-                            restore = restore.takeIf { showChannels }, onRestored = restored,
+                            brands, mostWatched, popular, allMatches, watch, health, minute.value, zone, is24Hour, accent, active && showChannels.value, first,
+                            restore = restore.takeIf { showChannels.value }, onRestored = restored,
                             onPlay = playChannel, onHide = onHideChannel, onShowHidden = onShowHiddenChannels,
                         )
                     }
                 }
-                (visitedShelves + listOfNotNull(shelfKey)).distinct().forEach { k ->
+                (visitedShelves + listOfNotNull(shelfKey.value)).distinct().forEach { k ->
                     key(k) {
-                        val shown = k == shelfKey
+                        val shown = k == shelfKey.value
                         val focusable = rememberUpdatedState(active && shown)
                         Box(Modifier.graphicsLayer { alpha = if (shown) 1f else 0f }) {
                             Column {
@@ -309,10 +326,10 @@ fun FootballScreen(
                                         today.value.next?.let { "Next: ${dayName(it.kickoff, minute.value, zone)}" },
                                         followed = emptySet(), chips, hasPlaylist, minute.value, zone, is24Hour, accent, active, focusable,
                                         restore.takeIf { shown }, restored, watchMatch,
-                                )
+                                    )
                                 } else {
                                     val leagueDay = remember(shelfLeague, leagueMatches) {
-                                        derivedStateOf<LeaguePage.Day?> { league?.let { LeaguePage.today(leagueMatches[it.id].orEmpty(), minute.value, zone) } }
+                                        derivedStateOf<LeaguePage.Day?> { shelfLeague?.let { LeaguePage.today(leagueMatches[it.id].orEmpty(), minute.value, zone) } }
                                     }
                                     val next = leagueDay.value?.next?.let { n ->
                                         val time = FootballBoards.timeLabel(n.kickoff, zone, is24Hour)
@@ -338,9 +355,7 @@ fun FootballScreen(
         }
 
         Row(Modifier.align(Alignment.BottomStart).padding(start = 48.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-            key(inTabs, hasTarget.value, showChannels, names.size) {
-                FootballFooterHints(inTabs, hasTarget.value, showChannels, names.size)
-            }
+            FootballFooterHints(inTabs, hasTarget.value, showChannels.value, names.size)
             Icon(Icons.ChevronLeft, null, tint = Palette.Muted, modifier = Modifier.size(14.dp))
             Text("Back: home", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Palette.Muted, modifier = Modifier.padding(start = 4.dp))
         }
