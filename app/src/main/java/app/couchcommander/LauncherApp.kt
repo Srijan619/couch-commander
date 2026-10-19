@@ -19,10 +19,12 @@ import app.couchcommander.data.iptv.WatchFinder
 import app.couchcommander.data.iptv.VodRepository
 import app.couchcommander.data.iptv.WatchOption
 import app.couchcommander.data.media.KeystoreSessionStore
+import app.couchcommander.data.media.KeystoreTraktTokenStore
 import app.couchcommander.data.media.MediaRepository
 import app.couchcommander.data.media.ContinueWatching
 import app.couchcommander.data.media.RemoteImages
 import app.couchcommander.data.media.TmdbAccount
+import app.couchcommander.data.media.TraktScrobbler
 import app.couchcommander.remote.PairActivity
 import app.couchcommander.remote.Pairing
 import app.couchcommander.remote.RemoteApi
@@ -31,6 +33,10 @@ import app.couchcommander.remote.RemoteServer
 import app.couchcommander.remote.RemoteTokens
 import app.media.MediaKind
 import app.media.TmdbAccountRepository
+import app.media.trakt.Trakt
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
@@ -85,7 +91,10 @@ class AppContainer(app: Application) {
     /** Films and series played lately, for the Movies and TV page's Continue shelf. */
     val played = ContinueWatching(app.filesDir)
     /** The user's TMDB account (watchlist, favourites, ratings), signed in from a phone. */
-    val tmdb = TmdbAccount(TmdbAccountRepository(http, BuildConfig.STORE_URL), KeystoreSessionStore(app.filesDir), scope)
+    val tmdb = TmdbAccount(TmdbAccountRepository(http, "https://api.themoviedb.org/3", BuildConfig.TMDB_API_KEY), KeystoreSessionStore(app.filesDir), scope)
+    val traktStore = KeystoreTraktTokenStore(app.filesDir)
+    val trakt = Trakt(http, BuildConfig.TRAKT_CLIENT_ID, traktStore, userAgent = "CouchCommander/0.1.0")
+    val traktScrobbler = TraktScrobbler(app.filesDir, trakt, scope)
     /** Phones paired to play on the TV (see RemoteApi). */
     val remoteTokens = RemoteTokens(app.filesDir)
     val pairing = Pairing(remoteTokens)
@@ -118,6 +127,18 @@ class AppContainer(app: Application) {
         iptv.refresh(iptvSource.source.value, (config.config.value.footballTeams + leagues.teams.value).distinctBy { it.id }, Instant.now(), force = true)
 
     init {
+        scope.launch {
+            trakt.load()
+            traktScrobbler.flush()
+        }
+        val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        runCatching {
+            cm?.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    scope.launch { traktScrobbler.flush() }
+                }
+            })
+        }
         // Both pages' shelves at start and each time the page opens or closes; the repository only fetches them
         // when they're more than a few hours old.
         scope.launch {

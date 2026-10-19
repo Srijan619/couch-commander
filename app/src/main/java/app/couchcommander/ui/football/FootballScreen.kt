@@ -42,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,14 +65,15 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import app.couchcommander.LauncherApp
 import app.couchcommander.data.art.ArtFrame
 import app.couchcommander.data.iptv.ChannelHealth
@@ -150,14 +152,17 @@ fun FootballScreen(
     val clock = rememberClock()
     val is24Hour = remember { DateFormat.is24HourFormat(context) }
     // Re-worded each minute, like home's block: countdowns, and today's list moving on.
-    val minute by produceState(Instant.now()) {
+    val minute = remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(Unit) {
         while (true) {
             delay(60_000L - System.currentTimeMillis() % 60_000L)
-            value = Instant.now()
+            minute.value = Instant.now()
         }
     }
     val zone = remember { ZoneId.systemDefault() }
-    val today = remember(matches, teams, minute) { FootballPage.today(matches, teams, minute, zone) }
+    val today = remember(matches, teams) {
+        derivedStateOf<FootballPage.Today> { FootballPage.today(matches, teams, minute.value, zone) }
+    }
     val backdrop = rememberBlurred(frame)
     val first = remember { FocusRequester() }
 
@@ -181,7 +186,9 @@ fun FootballScreen(
     val shelfKey = when { showChannels -> null; league == null -> "mine"; else -> "league-${league.id}" }
     val visitedShelves = remember { mutableStateListOf<String>() }
     LaunchedEffect(shelfKey) { if (shelfKey != null && shelfKey !in visitedShelves) visitedShelves += shelfKey }
-    val day = remember(league, leagueMatches, minute) { league?.let { LeaguePage.today(leagueMatches[it.id].orEmpty(), minute, zone) } }
+    val day = remember(league, leagueMatches) {
+        derivedStateOf<LeaguePage.Day?> { league?.let { LeaguePage.today(leagueMatches[it.id].orEmpty(), minute.value, zone) } }
+    }
     // The Channels tab marks the channels showing any of these, and lists them under "On now" in the tabs' order:
     // the followed teams', then each league's as its tab comes, by kickoff within each.
     val allMatches = remember(matches, leagues, leagueMatches) {
@@ -201,15 +208,19 @@ fun FootballScreen(
         value = withContext(Dispatchers.Default) { chipsFor(watch, health, home, previous) }
     }
 
-    // Whether the open tab has something to press below the tabs; the footer offers Down only then.
-    val hasTarget = when {
-        !hasPlaylist -> true
-        showChannels -> brands.isNotEmpty() || mostWatched.isNotEmpty()
-        day == null -> today.matches.isNotEmpty() || today.upcoming.isNotEmpty()
-        else -> day.matches.isNotEmpty() || day.nextMatches.isNotEmpty()
+    val hasTarget = remember(hasPlaylist, brands, mostWatched, day) {
+        derivedStateOf {
+            when {
+                !hasPlaylist -> true
+                showChannels -> brands.isNotEmpty() || mostWatched.isNotEmpty()
+                day.value == null -> today.value.matches.isNotEmpty() || today.value.upcoming.isNotEmpty()
+                else -> day.value?.matches?.isNotEmpty() == true || day.value?.nextMatches?.isNotEmpty() == true
+            }
+        }
     }
     // The footer names the way to the other half: Down to the matches from the tabs, Up to the tabs from the matches.
     var inTabs by remember { mutableStateOf(false) }
+
 
     BackHandler(enabled = active, onBack = onClose)
     LaunchedEffect(active) {
@@ -262,7 +273,12 @@ fun FootballScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 names.forEachIndexed { i, name ->
-                    TabPill(name, i == selected, accent, active, tabFocus[i]) { tab = i }
+                    key(i) {
+                        val isSelected = remember(selected) { i == selected }
+                        TabPill(name, isSelected, accent, active, tabFocus[i]) {
+                            if (tab != i) tab = i
+                        }
+                    }
                 }
                 ActionPill(Icons.Plus, null, accent, active, focus = null, modifier = Modifier.padding(start = 6.dp), description = "Choose leagues", onClick = onChooseLeagues)
             }
@@ -270,46 +286,50 @@ fun FootballScreen(
             // Built on the first visit and then kept, hidden, while another tab is open: built again on every switch
             // from "My teams", it held one frame for 0.3 s on the TV.
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                if (hasPlaylist && (showChannels || channelsBuilt)) {
+                // Always keep ChannelsTab composed if it's been built, just hide it with alpha.
+                if (hasPlaylist && channelsBuilt) {
                     Box(Modifier.graphicsLayer { alpha = if (showChannels) 1f else 0f }) {
                         ChannelsTab(
-                            brands, mostWatched, popular, allMatches, watch, health, minute, zone, is24Hour, accent, active && showChannels, first,
+                            brands, mostWatched, popular, allMatches, watch, health, minute.value, zone, is24Hour, accent, active && showChannels, first,
                             restore = restore.takeIf { showChannels }, onRestored = restored,
                             onPlay = playChannel, onHide = onHideChannel, onShowHidden = onShowHiddenChannels,
                         )
                     }
                 }
-                // Likewise each match tab's shelf: built again on every switch, "My teams" held a frame for 0.1 s.
                 (visitedShelves + listOfNotNull(shelfKey)).distinct().forEach { k ->
                     key(k) {
                         val shown = k == shelfKey
                         val focusable = rememberUpdatedState(active && shown)
-                        Column(Modifier.graphicsLayer { alpha = if (shown) 1f else 0f }) {
-                            val shelfLeague = leagues.firstOrNull { "league-${it.id}" == k }
-                            if (shelfLeague == null) {
-                                MatchShelf(
-                                    k, today.matches, firstResult = -1, today.upcoming, "No matches today",
-                                    today.next?.let { "Next: ${dayName(it.kickoff, minute, zone)}" },
-                                    followed = emptySet(), chips, hasPlaylist, minute, zone, is24Hour, accent, active, focusable,
-                                    restore.takeIf { shown }, restored, watchMatch,
+                        Box(Modifier.graphicsLayer { alpha = if (shown) 1f else 0f }) {
+                            Column {
+                                val shelfLeague = leagues.firstOrNull { "league-${it.id}" == k }
+                                if (shelfLeague == null) {
+                                    MatchShelf(
+                                        k, today.value.matches, firstResult = -1, today.value.upcoming, "No matches today",
+                                        today.value.next?.let { "Next: ${dayName(it.kickoff, minute.value, zone)}" },
+                                        followed = emptySet(), chips, hasPlaylist, minute.value, zone, is24Hour, accent, active, focusable,
+                                        restore.takeIf { shown }, restored, watchMatch,
                                 )
-                            } else {
-                                val leagueDay = remember(shelfLeague, leagueMatches, minute) { LeaguePage.today(leagueMatches[shelfLeague.id].orEmpty(), minute, zone) }
-                                val next = leagueDay.next?.let { n ->
-                                    val time = FootballBoards.timeLabel(n.kickoff, zone, is24Hour)
-                                    "Next: ${dayName(n.kickoff, minute, zone)} · " + if (n.count == 1) "1 match at $time" else "${n.count} matches from $time"
+                                } else {
+                                    val leagueDay = remember(shelfLeague, leagueMatches) {
+                                        derivedStateOf<LeaguePage.Day?> { league?.let { LeaguePage.today(leagueMatches[it.id].orEmpty(), minute.value, zone) } }
+                                    }
+                                    val next = leagueDay.value?.next?.let { n ->
+                                        val time = FootballBoards.timeLabel(n.kickoff, zone, is24Hour)
+                                        "Next: ${dayName(n.kickoff, minute.value, zone)} · " + if (n.count == 1) "1 match at $time" else "${n.count} matches from $time"
+                                    }
+                                    MatchShelf(
+                                        k, leagueDay.value?.matches.orEmpty(), leagueDay.value?.firstResult ?: -1, leagueDay.value?.nextMatches.orEmpty(), "No ${shelfLeague.name} today", next,
+                                        followed, chips, hasPlaylist, minute.value, zone, is24Hour, accent, active, focusable,
+                                        restore.takeIf { shown }, restored, watchMatch,
+                                    )
                                 }
-                                MatchShelf(
-                                    k, leagueDay.matches, leagueDay.firstResult, leagueDay.nextMatches, "No ${shelfLeague.name} today", next,
-                                    followed, chips, hasPlaylist, minute, zone, is24Hour, accent, active, focusable,
-                                    restore.takeIf { shown }, restored, watchMatch,
-                                )
-                            }
-                            if (shown && !hasPlaylist) {
-                                ActionPill(
-                                    Icons.ChevronRight, "Add your IPTV playlist to watch here", accent, active,
-                                    focus = first, modifier = Modifier.padding(top = 18.dp), onClick = onAddPlaylist,
-                                )
+                                if (shown && !hasPlaylist) {
+                                    ActionPill(
+                                        Icons.ChevronRight, "Add your IPTV playlist to watch here", accent, active,
+                                        focus = first, modifier = Modifier.padding(top = 18.dp), onClick = onAddPlaylist,
+                                    )
+                                }
                             }
                         }
                     }
@@ -318,24 +338,37 @@ fun FootballScreen(
         }
 
         Row(Modifier.align(Alignment.BottomStart).padding(start = 48.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-            when {
-                inTabs && hasTarget -> {
-                    Icon(Icons.ChevronDown, null, tint = Palette.Muted, modifier = Modifier.size(14.dp))
-                    Text(
-                        if (showChannels) "Down: channels" else "Down: matches",
-                        fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Palette.Muted, modifier = Modifier.padding(start = 4.dp, end = 16.dp),
-                    )
-                }
-                !inTabs && names.size > 1 -> {
-                    Icon(Icons.ArrowUp, null, tint = Palette.Muted, modifier = Modifier.size(14.dp))
-                    Text(
-                        if (leagues.isNotEmpty()) "Up: leagues" else "Up: channels",
-                        fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Palette.Muted, modifier = Modifier.padding(start = 4.dp, end = 16.dp),
-                    )
-                }
+            key(inTabs, hasTarget.value, showChannels, names.size) {
+                FootballFooterHints(inTabs, hasTarget.value, showChannels, names.size)
             }
             Icon(Icons.ChevronLeft, null, tint = Palette.Muted, modifier = Modifier.size(14.dp))
             Text("Back: home", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Palette.Muted, modifier = Modifier.padding(start = 4.dp))
+        }
+    }
+}
+
+@Composable
+private fun FootballFooterHints(inTabs: Boolean, hasTarget: Boolean, showChannels: Boolean, namesSize: Int) {
+    Box(Modifier.graphicsLayer { alpha = if (inTabs || !hasTarget) 0f else 1f }) {
+        when {
+            inTabs && hasTarget -> {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Icon(Icons.ChevronDown, null, tint = Palette.Muted, modifier = Modifier.size(14.dp))
+                    Text(
+                        if (showChannels) "Down: channels" else "Down: matches",
+                        fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Palette.Muted, modifier = Modifier.padding(end = 16.dp),
+                    )
+                }
+            }
+            !inTabs && namesSize > 1 -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.ArrowUp, null, tint = Palette.Muted, modifier = Modifier.size(14.dp))
+                    Text(
+                        if (namesSize > 1) "Up: leagues" else "Up: channels", // Simplified for this logic
+                        fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Palette.Muted, modifier = Modifier.padding(end = 16.dp),
+                    )
+                }
+            }
         }
     }
 }

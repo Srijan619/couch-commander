@@ -136,7 +136,7 @@ fun MediaScreen(
     // Each tab's shelves, kept while what they're built from stays the same: the hidden tabs' shelves below get the
     // same list after a switch, so they skip recomposing.
     val rowsByTab = kinds.map { k ->
-        remember(k, lately, session != null, myFilms, mySeries, movies, tv) {
+        remember(k, lately, session != null, myFilms, mySeries, movies.fetchedAt, tv.fetchedAt) {
             shelfRows(k, lately, session != null, myFilms, mySeries, movies, tv) { grow, shelf -> searchScope.launch { media.more(grow, shelf) } }
         }
     }

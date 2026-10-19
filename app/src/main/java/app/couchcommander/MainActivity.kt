@@ -51,6 +51,7 @@ import app.couchcommander.ui.home.FocusRequest
 import app.couchcommander.ui.home.HomeScreen
 import app.couchcommander.ui.picker.AppPicker
 import app.couchcommander.ui.settings.SettingsPanel
+import app.couchcommander.ui.settings.TraktPanel
 import app.couchcommander.ui.theme.CouchTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -116,6 +117,7 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
     var moviesOpen by rememberSaveable { mutableStateOf(false) }
     var playlistOpen by rememberSaveable { mutableStateOf(false) }
     var leaguesOpen by rememberSaveable { mutableStateOf(false) }
+    var traktOpen by rememberSaveable { mutableStateOf(false) }
 
     val matches by container.football.matches.collectAsStateWithLifecycle()
     val leagueMatches by container.leagues.matches.collectAsStateWithLifecycle()
@@ -126,6 +128,7 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
     val syncing by container.iptv.syncing.collectAsStateWithLifecycle()
     val vodStatus by container.vod.status.collectAsStateWithLifecycle()
     val channelHealth by container.channelHealth.records.collectAsStateWithLifecycle()
+    val traktUsername by container.trakt.username.collectAsStateWithLifecycle()
     // Nothing is on home until the user has picked, so the picker opens by itself on first run.
     val pickerOpen = choosingApps || !config.onboarded
     var focusRequest by remember { mutableStateOf(FocusRequest(null, 0)) }
@@ -142,6 +145,7 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
             moviesOpen = false
             playlistOpen = false
             leaguesOpen = false
+            traktOpen = false
             if (container.config.config.value.onboarded) choosingApps = false
             focus(null)
         }
@@ -156,7 +160,7 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
             .onPreviewKeyEvent { e ->
                 keyTick.intValue++
                 // The Menu key, on remotes that have one, toggles settings.
-                if (e.nativeKeyEvent.keyCode != KeyEvent.KEYCODE_MENU || menuFor != null || pickerOpen || teamsOpen || footballOpen || moviesOpen || playlistOpen || leaguesOpen) return@onPreviewKeyEvent false
+                if (e.nativeKeyEvent.keyCode != KeyEvent.KEYCODE_MENU || menuFor != null || pickerOpen || teamsOpen || footballOpen || moviesOpen || playlistOpen || leaguesOpen || traktOpen) return@onPreviewKeyEvent false
                 if (e.nativeKeyEvent.action == KeyEvent.ACTION_UP) {
                     settingsOpen = !settingsOpen
                     if (!settingsOpen) focus(null)
@@ -185,7 +189,7 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
             football = football,
             // The picker and the football page cover home; panning the hidden painting would only slow them down.
             drift = idle && !pickerOpen && !footballOpen && !moviesOpen,
-            interactive = menuFor == null && !settingsOpen && !pickerOpen && !teamsOpen && !footballOpen && !moviesOpen && !playlistOpen && !leaguesOpen,
+            interactive = menuFor == null && !settingsOpen && !pickerOpen && !teamsOpen && !footballOpen && !moviesOpen && !playlistOpen && !leaguesOpen && !traktOpen,
             focusRequest = focusRequest,
             onLaunch = container.apps::launch,
             onAppMenu = { menuFor = it.key },
@@ -226,7 +230,7 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
             )
         }
 
-        if (settingsOpen && !pickerOpen && !teamsOpen && !playlistOpen && !leaguesOpen) {
+        if (settingsOpen && !pickerOpen && !teamsOpen && !playlistOpen && !leaguesOpen && !traktOpen) {
             SettingsPanel(
                 config = config,
                 inputs = inputs,
@@ -252,6 +256,8 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
                     else -> "${iptvState.sportsChannels} channels"
                 },
                 onPlaylist = { playlistOpen = true },
+                traktUsername = traktUsername,
+                onTrakt = { traktOpen = true },
                 homeButton = homeButton,
                 onHomeButton = {
                     runCatching { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }.onFailure {
@@ -376,6 +382,14 @@ private fun LauncherRoot(container: AppContainer, homePresses: MutableSharedFlow
                 onAdd = { league -> container.config.update { it.copy(footballLeagues = it.footballLeagues + league) } },
                 onRemove = { league -> container.config.update { it.copy(footballLeagues = it.footballLeagues.filterNot { l -> l.id == league.id }) } },
                 onDismiss = { leaguesOpen = false },
+            )
+        }
+
+        if (traktOpen) {
+            TraktPanel(
+                trakt = container.trakt,
+                accent = accent,
+                onDismiss = { traktOpen = false },
             )
         }
 

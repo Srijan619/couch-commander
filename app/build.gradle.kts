@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     // AGP 9 compiles Kotlin itself, so no separate kotlin-android plugin is needed.
     alias(libs.plugins.android.application)
@@ -9,6 +11,12 @@ android {
     namespace = "app.couchcommander"
     compileSdk = 37
 
+    val localProps = Properties().apply {
+        val f = rootProject.file("local.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+    val traktClientId = localProps.getProperty("trakt.clientId") ?: ""
+
     defaultConfig {
         applicationId = "app.couchcommander"
         // Android 9: still common on TVs and sticks.
@@ -18,6 +26,8 @@ android {
         versionName = "0.1.0"
         // The TMDB proxy garbled uses (it holds the TMDB key), for the Movies and TV pages.
         buildConfigField("String", "STORE_URL", "\"https://garbled-store.onrender.com/\"")
+        buildConfigField("String", "TMDB_API_KEY", "\"${localProps.getProperty("tmdb.apiKey") ?: ""}\"")
+        buildConfigField("String", "TRAKT_CLIENT_ID", "\"$traktClientId\"")
     }
 
     buildTypes {

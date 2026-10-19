@@ -38,6 +38,8 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import app.couchcommander.data.media.Watching
 import app.media.MovieDetails
+import app.media.trakt.TraktItem
+import app.media.trakt.TraktScrobble
 import java.util.concurrent.Executors
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -85,10 +87,25 @@ class VodPlayerActivity : ComponentActivity() {
     private var openedAt = 0L
     private lateinit var current: VodPlay
     private var started = false
+    private var stoppedReported = false
     /** Network failures retried for the stream being started; back to 0 once one plays. */
     private var retries = 0
     /** Whether a next episode is known to exist for [current]: until it is, a series isn't taken off Continue. */
     private var next: NextEpisode = NextEpisode.Unknown
+
+    private fun traktItem(play: VodPlay): TraktItem =
+        if (play.season != null && play.episode != null) {
+            TraktItem.Episode(showTmdb = play.title.id, season = play.season, number = play.episode)
+        } else {
+            TraktItem.Movie(tmdb = play.title.id)
+        }
+
+    private fun scrobble(moment: TraktScrobble, overrideProgress: Float? = null) {
+        val p = player
+        val dur = p?.duration?.takeIf { it > 0 } ?: 0L
+        val prog = overrideProgress ?: if (dur > 0) (p!!.currentPosition.toFloat() / dur.toFloat()).coerceIn(0f, 1f) else 0f
+        container.traktScrobbler.report(moment, traktItem(current), prog)
+    }
 
     private val creditsTick = object : Runnable {
         override fun run() {
@@ -185,6 +202,12 @@ class VodPlayerActivity : ComponentActivity() {
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     if (!isPlaying) save()
+                    if (isPlaying) {
+                        stoppedReported = false
+                        scrobble(TraktScrobble.Start)
+                    } else if (started && !stoppedReported && player?.playWhenReady == false && player?.playbackState != Player.STATE_ENDED) {
+                        scrobble(TraktScrobble.Pause)
+                    }
                 }
 
                 // Play, pause, seeks, buffering: whatever a phone asking `/now` should see.
@@ -222,6 +245,10 @@ class VodPlayerActivity : ComponentActivity() {
 
     override fun onStop() {
         save()
+        if (started && !stoppedReported) {
+            stoppedReported = true
+            scrobble(TraktScrobble.Stop)
+        }
         LivePlayback.clear(this)
         super.onStop()
         handler.removeCallbacksAndMessages(null)
@@ -258,6 +285,7 @@ class VodPlayerActivity : ComponentActivity() {
 
     private fun load(play: VodPlay) {
         started = false
+        stoppedReported = false
         player?.run {
             setMediaSource(source(play), play.startMs)
             playWhenReady = true
@@ -323,8 +351,13 @@ class VodPlayerActivity : ComponentActivity() {
     /** On to the next episode, in a fresh player: from ⏭, the Next button, or the end of this one. */
     private fun playNext() {
         val after = current.next ?: return
+        if (!stoppedReported) {
+            stoppedReported = true
+            scrobble(TraktScrobble.Stop, overrideProgress = 1f)
+        }
         write(after, positionMs = 0, durationMs = 0)
         current = after
+        stoppedReported = false
         openedAt = SystemClock.elapsedRealtime()
         view.player = null
         player?.release()
@@ -370,6 +403,10 @@ class VodPlayerActivity : ComponentActivity() {
 
     /** The end with no next episode: the title leaves Continue, unless it's a series whose next couldn't be looked up. */
     private fun ended() {
+        if (!stoppedReported) {
+            stoppedReported = true
+            scrobble(TraktScrobble.Stop, overrideProgress = 1f)
+        }
         if (next != NextEpisode.Unknown) write(null)
         finish()
     }

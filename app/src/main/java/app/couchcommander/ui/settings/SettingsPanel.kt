@@ -74,6 +74,8 @@ fun SettingsPanel(
     screensaverOurs: Boolean,
     onScreensaver: () -> Unit,
     onHomeButton: () -> Unit,
+    traktUsername: String? = null,
+    onTrakt: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     BackHandler(onBack = onDismiss)
@@ -161,6 +163,21 @@ fun SettingsPanel(
                     },
                     { PanelRow("IPTV playlist", accent, onPlaylist, value = playlist, grouped = true) },
                     { PanelRow("Football in screensaver", accent, { onUpdate { it.copy(ambientFootball = !it.ambientFootball) } }, toggle = config.ambientFootball, grouped = true) },
+                ),
+            )
+
+            PanelGroup(
+                "Trakt",
+                rows = listOf(
+                    {
+                        PanelRow(
+                            if (traktUsername != null) "Trakt account" else "Connect Trakt",
+                            accent,
+                            onTrakt,
+                            value = traktUsername ?: "Code on TV",
+                            grouped = true,
+                        )
+                    },
                 ),
             )
 
