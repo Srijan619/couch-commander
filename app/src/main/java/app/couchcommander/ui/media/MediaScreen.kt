@@ -1,6 +1,7 @@
 package app.couchcommander.ui.media
 
 import android.view.KeyEvent
+import android.webkit.WebView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -210,7 +211,24 @@ fun MediaScreen(
     LaunchedEffect(tab) { if (tab !in visitedTabs) visitedTabs += tab }
     LaunchedEffect(accountOpen && active) { if (accountOpen && active) account.startSignIn() else account.stopSignIn() }
 
-    val shelvesActive = active && opened.isEmpty() && !accountOpen && !searchOpen
+    // The first time the page opens, every tab's shelves and the trailers' web player are made behind a notice while
+    // the remote waits: made on the first switch instead, they held the TV for up to a second. Kept for as long as
+    // the app runs, like the tabs.
+    var warm by remember { mutableStateOf(false) }
+    LaunchedEffect(active) {
+        if (!active || warm) return@LaunchedEffect
+        // Once the page has slid in: made during the slide, it would stutter.
+        delay(WARM_AFTER_MS)
+        kinds.indices.forEach { t ->
+            if (t !in visitedTabs) visitedTabs += t
+            repeat(2) { withFrameNanos { } }
+        }
+        // The first WebView loads the browser engine, about a quarter of a second on the TV.
+        WebView(context).destroy()
+        withFrameNanos { }
+        warm = true
+    }
+    val shelvesActive = active && warm && opened.isEmpty() && !accountOpen && !searchOpen
     // The page hides around the hero's trailer while nobody presses a key.
     val immersion = rememberImmersion()
     // The search has its own Back while it's on top.
@@ -238,6 +256,8 @@ fun MediaScreen(
             .fillMaxSize()
             .background(Palette.Ground)
             .onPreviewKeyEvent { e ->
+                // Getting ready: everything but Back waits.
+                if (!warm && e.nativeKeyEvent.keyCode != KeyEvent.KEYCODE_BACK) return@onPreviewKeyEvent true
                 if (immersion.onKey(e)) return@onPreviewKeyEvent true
                 val k = e.nativeKeyEvent
                 if (!okHeld || k.keyCode !in confirmKeys) return@onPreviewKeyEvent false
@@ -332,7 +352,7 @@ fun MediaScreen(
                         Box(Modifier.graphicsLayer { alpha = if (shown) 1f else 0f }) {
                             TabShelves(
                                 t, rowsByTab[t], shelfScrolls[t], focusable, pivot, rowScrolling, justInView, requester, shelfPoster,
-                                onFocused, onOpen, onHold, onResume,
+                                onFocused, onOpen, onHold, onResume, allAtOnce = !warm,
                             )
                         }
                     }
@@ -384,6 +404,8 @@ fun MediaScreen(
             )
         }
 
+        if (active && !warm) WarmingUp()
+
         if (accountOpen && active) {
             AccountPanel(
                 session = session,
@@ -421,12 +443,23 @@ private fun TabShelves(
     onOpen: (MovieDetails) -> Unit,
     onHold: (MovieDetails) -> Unit,
     onResume: (Watching) -> Unit,
+    /** Behind the getting-ready notice, where nobody waits on a frame: every shelf straight away. */
+    allAtOnce: Boolean = false,
 ) {
     if (rows.isEmpty()) return
+    // A tab's first visit makes every shelf and poster at once, which held the switch half a second on the TV: the
+    // shelves in view come first, the rest one a frame after, well before Down can reach them.
+    var made by remember { mutableIntStateOf(if (allAtOnce) Int.MAX_VALUE else SHELVES_AT_ONCE) }
+    LaunchedEffect(Unit) {
+        while (made < rows.size) {
+            withFrameNanos { }
+            made++
+        }
+    }
     CompositionLocalProvider(LocalBringIntoViewSpec provides pivot) {
     Column(Modifier.verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(8.dp)) {
     CompositionLocalProvider(LocalBringIntoViewSpec provides rowScrolling) {
-        rows.forEach { row ->
+        rows.take(made).forEach { row ->
             key(row.id) {
             val shelf = "$tab/${row.id}"
             RowCard(live = false, verticalAlignment = Alignment.Top, padding = PaddingValues(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
@@ -578,6 +611,10 @@ private fun mix(films: List<MovieDetails>, series: List<MovieDetails>): List<Mov
 
 /** Titles still to the right of the last one in view when a shelf fetches its next page. */
 private const val GROW_WHEN_LEFT = 6
+/** The page's slide in from home, a little over MainActivity's 380 ms. */
+private const val WARM_AFTER_MS = 420L
+/** The shelves a tab's first visit makes straight away: more than the screen shows below the hero. */
+private const val SHELVES_AT_ONCE = 3
 /** Posters standing in for a shelf's next page while it comes. */
 private const val GROWING_PLACEHOLDERS = 3
 
@@ -604,4 +641,15 @@ private class JustInView(private val marginPx: Float) : BringIntoViewSpec {
 private class ShelfPivot(private val pivotPx: Float, private val frozen: () -> Boolean) : BringIntoViewSpec {
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
         if (frozen()) 0f else offset - pivotPx
+}
+
+/** Over the page the first time it opens, while [MediaScreen] makes its tabs and the trailer player. */
+@Composable
+private fun WarmingUp() {
+    Box(Modifier.fillMaxSize().background(Palette.Ground), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Getting Movies & TV ready…", fontSize = 34.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
+            Text("Putting the shelves and trailers together. Just a moment.", fontSize = 15.sp, color = Palette.Muted)
+        }
+    }
 }

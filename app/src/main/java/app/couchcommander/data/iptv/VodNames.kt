@@ -11,6 +11,7 @@ object VodNames {
     private val BRACKETED = Regex("""\s*[\[(]([^\])]{1,20})[\])]""")
     private val YEAR = Regex("""(?:^|[\s(\[-])((?:19|20)\d{2})[)\]]?\s*$""")
     private val TRAILING_SEPARATOR = Regex("""[\s\-|:.]+$""")
+    private val SPACES = Regex("""\s+""")
     private val LATEST_YEAR = java.time.Year.now().value + 3
     private val QUALITY = setOf("4k", "uhd", "fhd", "hd", "sd", "hdr", "hdr10", "dv", "hevc", "h265", "x265", "1080p", "720p", "2160p", "multi", "multisub", "multi sub", "sub", "subs", "dub", "dubbed", "vostfr", "vf", "vo")
 
@@ -35,7 +36,7 @@ object VodNames {
                 ""
             } else m.value
         }
-        var words = rest.trim().split(Regex("\\s+"))
+        var words = rest.trim().split(SPACES)
         while (words.size > 1 && Names.fold(words.last()) in QUALITY) {
             tags += words.last().uppercase()
             words = words.dropLast(1)
@@ -54,8 +55,8 @@ object VodNames {
     fun year(name: String): Int? = parse(name).year
 
     /** Forms of a panel name to look it up by: without its tags, and whole (in case a tag was really the title). */
-    fun keys(name: String): Set<String> =
-        setOf(key(parse(name).title), key(name)).filter { it.isNotEmpty() }.toSet()
+    fun keys(name: String, parsed: Parsed = parse(name)): Set<String> =
+        setOf(key(parsed.title), key(name)).filter { it.isNotEmpty() }.toSet()
 
     /** The lookup form of a title: folded, without a leading "the". */
     fun key(title: String): String = Names.fold(title).removePrefix("the ").trim()

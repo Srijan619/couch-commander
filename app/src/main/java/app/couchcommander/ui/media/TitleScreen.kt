@@ -95,6 +95,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.ExperimentalFoundationApi
 
 /**
  * One film or series, over the shelves: its backdrop, facts, plot, where to watch it in the viewer's country and
@@ -104,6 +108,7 @@ import kotlinx.coroutines.flow.first
  * When the IPTV panel has the title, Play comes first (Resume where it was left), with a chip for each version
  * when there are several, and a series' episodes play from their rows.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TitleScreen(
     title: MovieDetails,
@@ -270,7 +275,13 @@ fun TitleScreen(
             snapshotFlow { scroll.isScrollInProgress }.first { !it }
             if (scroll.value > 0) scroll.animateScrollTo(0)
         }
+        // The page scrolls only to show what isn't in full view: the TV's default puts whatever takes focus 30% down,
+        // so focus landing on the buttons as the page opened scrolled the title away, and then (topFocused) back.
+        // What's inside, the episode and title rows, keeps the TV's way.
+        val inside = LocalBringIntoViewSpec.current
+        CompositionLocalProvider(LocalBringIntoViewSpec provides InViewStays) {
         Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 48.dp, vertical = 30.dp)) {
+        CompositionLocalProvider(LocalBringIntoViewSpec provides inside) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
                 Text(if (title.kind == MediaKind.Movie) "Movies" else "TV", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Text(
@@ -508,9 +519,12 @@ fun TitleScreen(
                 modifier = Modifier.padding(top = 24.dp),
             )
         }
+        }
+        }
 
-        if (trailerOpen && active) {
-            TrailerScreen(full.videos.map { it.key }) {
+        // Made with the page and kept out of sight, so its trailer is buffered by the time Trailer is pressed.
+        if (active && trailer != null) {
+            TrailerScreen(full.videos.map { it.key }, open = trailerOpen) {
                 trailerOpen = false
                 runCatching { trailerFocus.requestFocus() }
             }
@@ -520,19 +534,23 @@ fun TitleScreen(
 
 /**
  * A trailer full screen with sound, in the launcher rather than the YouTube app (garbled's player). OK pauses and
- * plays; Back, or the trailer ending, closes it. The hints fade once it has played a few seconds.
+ * plays; Back, or the trailer ending, closes it. The hints fade once it has played a few seconds. Until [open], it's
+ * invisible and gets the trailer ready instead (when trailers may start by themselves: it buffers the start).
  */
 @Composable
-private fun TrailerScreen(keys: List<String>, onClose: () -> Unit) {
+private fun TrailerScreen(keys: List<String>, open: Boolean, onClose: () -> Unit) {
     var playing by remember { mutableStateOf(true) }
     var state by remember { mutableStateOf(TrailerState.Loading) }
     val focus = remember { FocusRequester() }
-    BackHandler(onBack = onClose)
-    LaunchedEffect(Unit) {
+    val prepare = rememberAutoplayAllowed()
+    BackHandler(enabled = open, onBack = onClose)
+    LaunchedEffect(open) {
+        if (!open) return@LaunchedEffect
+        playing = true
         withFrameNanos { }
         runCatching { focus.requestFocus() }
     }
-    LaunchedEffect(state) { if (state == TrailerState.Ended) onClose() }
+    LaunchedEffect(state) { if (state == TrailerState.Ended && open) onClose() }
     var hints by remember { mutableStateOf(true) }
     LaunchedEffect(state, playing) {
         hints = true
@@ -544,6 +562,7 @@ private fun TrailerScreen(keys: List<String>, onClose: () -> Unit) {
     Box(
         Modifier
             .fillMaxSize()
+            .alpha(if (open) 1f else 0f)
             .background(Color.Black)
             .focusRequester(focus)
             .onKeyEvent { e ->
@@ -551,9 +570,12 @@ private fun TrailerScreen(keys: List<String>, onClose: () -> Unit) {
                 if (e.nativeKeyEvent.action == android.view.KeyEvent.ACTION_UP) playing = !playing
                 true
             }
-            .focusable(),
+            .focusable(open),
     ) {
-        TrailerPlayer(keys, playing = playing, muted = false, loop = false, onStateChange = { state = it }, modifier = Modifier.fillMaxSize())
+        TrailerPlayer(
+            keys, playing = open && playing, muted = !open, loop = false, waitOutOverlay = false, prepare = prepare,
+            onStateChange = { state = it }, modifier = Modifier.fillMaxSize(),
+        )
         val message = when (state) {
             TrailerState.Failed -> "This trailer can't play here."
             TrailerState.Loading -> "Loading the trailer…"
@@ -565,6 +587,16 @@ private fun TrailerScreen(keys: List<String>, onClose: () -> Unit) {
             fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Palette.Muted,
             modifier = Modifier.align(Alignment.BottomStart).padding(start = 48.dp, bottom = 18.dp).alpha(if (hints || state != TrailerState.Playing) 1f else 0f),
         )
+    }
+}
+
+/** Leaves what's in full view where it is; anything else goes 30% down the page, as the TV's default puts it. */
+@OptIn(ExperimentalFoundationApi::class)
+private object InViewStays : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        if (offset >= 0 && offset + size <= containerSize) return 0f
+        val target = if (size <= containerSize) minOf(containerSize * 0.3f, containerSize - size) else 0f
+        return offset - target
     }
 }
 

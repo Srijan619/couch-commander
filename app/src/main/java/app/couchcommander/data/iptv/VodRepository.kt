@@ -3,6 +3,7 @@ package app.couchcommander.data.iptv
 import app.media.MediaKind
 import app.media.MovieDetails
 import java.io.File
+import java.io.OutputStream
 import java.security.MessageDigest
 import java.time.Duration
 import java.time.Instant
@@ -16,8 +17,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromStream
+import kotlinx.serialization.json.encodeToStream
 
 /** The panel's films and series as of the last sync; kept as `vod.json`, never with a URL in it. */
 @Serializable
@@ -27,6 +31,16 @@ data class VodIndex(
     val syncedAtEpochMillis: Long? = null,
     /** Hash of the source, so a new playlist syncs again straight away. */
     val key: String? = null,
+    val error: String? = null,
+)
+
+/** What [VodRepository.refresh] needs to decide on a sync, kept apart from the catalogue as `vod-meta.json`. */
+@Serializable
+private data class VodMeta(
+    val key: String? = null,
+    val syncedAtEpochMillis: Long? = null,
+    val movies: Int = 0,
+    val series: Int = 0,
     val error: String? = null,
 )
 
@@ -43,7 +57,7 @@ data class VodStatus(val movies: Int = 0, val series: Int = 0, val syncedAtEpoch
 /**
  * The films and series on the user's Xtream panel, for Play on a TMDB title. The catalogue is fetched in one
  * request per kind on a low-priority thread once a day and kept on disk; it is read into memory the first time a title
- * is looked up. A title is found by the panel's TMDB id when it has one, else by its name and year. An M3U
+ * is looked up. Deciding whether to sync reads only `vod-meta.json`: the catalogue can take a TV a minute to read. A title is found by the panel's TMDB id when it has one, else by its name and year. An M3U
  * playlist has no catalogue to ask, so it finds nothing for now.
  */
 class VodRepository(
@@ -56,6 +70,7 @@ class VodRepository(
     private val onLoaded: (Long) -> Unit = {},
 ) {
     private val file = File(dir, "vod.json")
+    private val metaFile = File(dir, "vod-meta.json")
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val mutex = Mutex()
     private var triedAt: Instant? = null
@@ -74,8 +89,8 @@ class VodRepository(
 
     /** Syncs when the source changed, the last sync is older than [MAX_AGE], or [force]. */
     suspend fun refresh(source: IptvSource?, now: Instant, force: Boolean = false) = mutex.withLock {
-        // Reads the catalogue on disk once, which also fills in the status for settings.
-        val current = withContext(io) { loading.withLock { lookup() }?.index ?: VodIndex() }
+        // Reads what was last synced once, which also fills in the status for settings.
+        val current = withContext(io) { meta() }
         if (source !is IptvSource.Xtream) {
             if (current.key != null) save(VodIndex())
             return@withLock
@@ -91,13 +106,16 @@ class VodRepository(
         _status.value = _status.value.copy(syncing = true)
         val next = try {
             withContext(dispatcher) {
-                runCatching { sync(source, now).copy(key = key) }
-                    .getOrElse { e -> current.copy(error = e.message ?: e.javaClass.simpleName) }
+                runCatching { sync(source, now).copy(key = key) }.getOrElse { e -> e }
             }
         } finally {
             _status.value = _status.value.copy(syncing = false)
         }
-        save(next)
+        when (next) {
+            is VodIndex -> save(next)
+            // Keeps the catalogue it had, without reading it just to note the failure.
+            is Throwable -> saveMeta(current.copy(error = next.message ?: next.javaClass.simpleName))
+        }
     }
 
     /** The panel's versions of [title], the surest first; empty when it has none or there's no catalogue yet. */
@@ -168,29 +186,52 @@ class VodRepository(
         }
     }
 
+    @OptIn(ExperimentalSerializationApi::class)
     private fun lookup(): Lookup? = lookup ?: run {
         val start = System.nanoTime()
-        runCatching { json.decodeFromString<VodIndex>(file.readText()) }.getOrNull()?.let(::Lookup)?.also {
+        // Streamed: the file can be tens of megabytes, too much to hold as one string on a TV as well.
+        runCatching { file.inputStream().buffered().use { json.decodeFromStream(VodIndex.serializer(), it) } }.getOrNull()?.let(::Lookup)?.also {
             lookup = it
-            _status.value = it.index.status()
             onLoaded((System.nanoTime() - start) / 1_000_000)
         }
     }
 
+    /** What was last synced. A catalogue saved before there was a meta file is read once to make one. */
+    private suspend fun meta(): VodMeta {
+        runCatching { json.decodeFromString(VodMeta.serializer(), metaFile.readText()) }.getOrNull()?.let {
+            _status.value = it.status()
+            return it
+        }
+        val index = loading.withLock { lookup() }?.index ?: return VodMeta()
+        return index.meta().also { saveMeta(it) }
+    }
+
+    @OptIn(ExperimentalSerializationApi::class)
     private suspend fun save(next: VodIndex) = withContext(io) {
         lookup = Lookup(next)
-        _status.value = next.status()
-        runCatching {
-            val tmp = File(file.parentFile, "${file.name}.tmp")
-            tmp.writeText(json.encodeToString(VodIndex.serializer(), next))
-            if (!tmp.renameTo(file)) {
-                file.delete()
-                tmp.renameTo(file)
-            }
+        // Streamed too: as one string, a whole catalogue doesn't fit in the app's memory on a TV.
+        val saved = runCatching { write(file) { json.encodeToStream(VodIndex.serializer(), next, it) } }.isSuccess
+        // Unsaved, the next start has only the old catalogue on disk: not synced, so it's fetched again.
+        saveMeta(if (saved) next.meta() else next.meta().copy(syncedAtEpochMillis = null, error = "Couldn't save the catalogue"))
+    }
+
+    private suspend fun saveMeta(meta: VodMeta) = withContext(io) {
+        _status.value = meta.status()
+        runCatching { write(metaFile) { it.write(json.encodeToString(VodMeta.serializer(), meta).encodeToByteArray()) } }
+    }
+
+    private fun write(target: File, encode: (OutputStream) -> Unit) {
+        val tmp = File(target.parentFile, "${target.name}.tmp")
+        tmp.outputStream().buffered().use(encode)
+        if (!tmp.renameTo(target)) {
+            target.delete()
+            tmp.renameTo(target)
         }
     }
 
-    private fun VodIndex.status() = VodStatus(movies.size, series.size, syncedAtEpochMillis, error, _status.value.syncing)
+    private fun VodIndex.meta() = VodMeta(key, syncedAtEpochMillis, movies.size, series.size, error)
+
+    private fun VodMeta.status() = VodStatus(movies, series, syncedAtEpochMillis, error, _status.value.syncing)
 
     private fun key(source: IptvSource): String {
         val text = json.encodeToString(IptvSource.serializer(), source) + KEY_VERSION
@@ -206,7 +247,8 @@ class VodRepository(
 
         private fun byKey(entries: List<VodEntry>): Map<String, List<VodEntry>> {
             val map = HashMap<String, MutableList<VodEntry>>()
-            entries.forEach { e -> VodNames.keys(e.name).forEach { map.getOrPut(it) { mutableListOf() } += e } }
+            // A catalogue synced before the keys were saved with it works them out here.
+            entries.forEach { e -> e.keys.ifEmpty { VodNames.keys(e.name) }.forEach { map.getOrPut(it) { mutableListOf() } += e } }
             return map
         }
     }

@@ -23,6 +23,11 @@ data class VodEntry(
     val tmdb: Int? = null,
     val year: Int? = null,
     val category: String = "",
+    /**
+     * The forms of [name] to look it up by ([VodNames.keys]), worked out when the catalogue syncs: reading tens of
+     * thousands of names back at start would otherwise mean parsing every one of them again.
+     */
+    val keys: List<String> = emptyList(),
 )
 
 /** One episode of a series on the panel. */
@@ -71,13 +76,15 @@ object XtreamVod {
     private fun entry(o: JsonObject, categories: Map<String, String>, series: Boolean): VodEntry? {
         val id = o.str(if (series) "series_id" else "stream_id") ?: return null
         val name = o.str("name")?.trim().orEmpty().ifEmpty { return null }
+        val parsed = VodNames.parse(name)
         return VodEntry(
             id = id,
             name = name,
             ext = o.str("container_extension")?.takeIf { it.isNotBlank() } ?: "mp4",
             tmdb = (o.str("tmdb") ?: o.str("tmdb_id"))?.trim()?.toIntOrNull()?.takeIf { it > 0 },
-            year = year(o) ?: VodNames.year(name),
+            year = year(o) ?: parsed.year,
             category = o.str("category_id")?.let { categories[it] }.orEmpty(),
+            keys = VodNames.keys(name, parsed).toList(),
         )
     }
 

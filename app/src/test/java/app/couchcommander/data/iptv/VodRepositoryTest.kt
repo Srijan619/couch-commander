@@ -13,6 +13,7 @@ import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class VodRepositoryTest {
     private val dir: File = Files.createTempDirectory("vod").toFile()
@@ -81,6 +82,33 @@ class VodRepositoryTest {
         repo.refresh(null, now)
         assertEquals(emptyList(), repo.find(film(19, "Metropolis", 1927)))
         assertFalse(File(dir, "vod.json").readText().contains("Metropolis"))
+    }
+
+    @Test
+    fun `deciding whether to sync doesn't read the catalogue, and its keys are saved with it`() = runTest {
+        repository().refresh(source, now)
+        assertEquals(listOf("metropolis"), XtreamVod.parseEntries(
+            """[{"stream_id": 11, "name": "|DE| Metropolis [4K]"}]""".byteInputStream(), emptyMap(), series = false,
+        ).single().keys.filter { it == "metropolis" })
+
+        var loads = 0
+        val fresh = VodRepository(dir, panel, Dispatchers.Unconfined, Dispatchers.Unconfined, onLoaded = { loads++ })
+        fresh.refresh(source, now.plusSeconds(3600))
+        assertEquals(0, loads)
+        assertTrue(File(dir, "vod.json").readText().contains("""["metropolis","en metropolis 1927"]"""))
+        assertEquals(4, fresh.status.value.movies)
+        fresh.find(film(19, "Metropolis", 1927))
+        assertEquals(1, loads)
+    }
+
+    @Test
+    fun `a catalogue saved before the meta file still counts as synced`() = runTest {
+        repository().refresh(source, now)
+        File(dir, "vod-meta.json").delete()
+        asked.clear()
+        repository().refresh(source, now.plusSeconds(3600))
+        assertEquals(emptyList(), asked)
+        assertEquals(listOf("10", "11"), repository().find(film(19, "Metropolis", 1927)).map { it.id })
     }
 
     @Test

@@ -185,9 +185,16 @@ class AppContainer(app: Application) {
                 }
             }
         }
-        // The film and series catalogue once a day; it only changes with the playlist, not with the teams.
+        // The film and series catalogue once a day; it only changes with the playlist, not with the teams. The first
+        // check waits a few minutes: a sync keeps a core and the garbage collector busy for a minute or more, which
+        // would make the pages stutter just as someone starts using them. A new playlist syncs at once.
         scope.launch {
+            var starting = true
             iptvSource.source.collectLatest { source ->
+                if (starting) {
+                    starting = false
+                    delay(VOD_START_DELAY_MS)
+                }
                 while (true) {
                     vod.refresh(source, Instant.now())
                     if (source == null) break
@@ -200,6 +207,7 @@ class AppContainer(app: Application) {
 
 private const val FOOTBALL_TICK_MS = 60_000L
 private const val IPTV_TICK_MS = 30 * 60_000L
+private const val VOD_START_DELAY_MS = 3 * 60_000L
 private val LEAGUE_WATCH_AHEAD: Duration = Duration.ofDays(2)
 
 class LauncherApp : Application() {

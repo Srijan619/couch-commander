@@ -32,7 +32,16 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.floatOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 enum class TrailerState { Loading, Playing, Paused, Ended, Failed }
 
@@ -57,8 +66,18 @@ fun TrailerPlayer(
     modifier: Modifier = Modifier,
     /** Starts over at the end; otherwise it fades back out. */
     loop: Boolean = true,
-    /** Above 1, crops in: 1.34 hides the black bars of a 2.39:1 trailer filling a 16:9 view. */
+    /**
+     * Above 1, crops in: 1.34 hides the black bars of a 2.39:1 trailer filling a 16:9 view. Only for 16:9 uploads:
+     * filling the view with a 4:3 one already crops off the bars such uploads have.
+     */
     zoom: Float = 1f,
+    /**
+     * Keeps the video hidden while YouTube's title and buttons are up. Off for a trailer someone asked for: a few
+     * seconds of YouTube's title beat four of black.
+     */
+    waitOutOverlay: Boolean = true,
+    /** While not [playing]: buffers the start, muted, and waits paused at 0, so playing starts at once. */
+    prepare: Boolean = false,
     onStateChange: (TrailerState) -> Unit = {},
 ) {
     var index by remember(keys) { mutableIntStateOf(0) }
@@ -71,7 +90,7 @@ fun TrailerPlayer(
         return
     }
     key(key) {
-        OneVideo(key, playing && resumed, muted, loop, zoom, modifier) { state ->
+        OneVideo(key, playing && resumed, muted, loop, zoom, waitOutOverlay, prepare, modifier) { state ->
             if (state == TrailerState.Failed && index < keys.lastIndex) index++ else report(state)
         }
     }
@@ -79,7 +98,17 @@ fun TrailerPlayer(
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun OneVideo(key: String, playing: Boolean, muted: Boolean, loop: Boolean, zoom: Float, modifier: Modifier, onStateChange: (TrailerState) -> Unit) {
+private fun OneVideo(
+    key: String,
+    playing: Boolean,
+    muted: Boolean,
+    loop: Boolean,
+    zoom: Float,
+    waitOutOverlay: Boolean,
+    prepare: Boolean,
+    modifier: Modifier,
+    onStateChange: (TrailerState) -> Unit,
+) {
     var ready by remember { mutableStateOf(false) }
     // What YouTube says, and whether its overlay has had time to go since playing (re)started.
     var player by remember { mutableStateOf(TrailerState.Loading) }
@@ -95,7 +124,7 @@ private fun OneVideo(key: String, playing: Boolean, muted: Boolean, loop: Boolea
     LaunchedEffect(player) {
         revealed = false
         if (player == TrailerState.Playing) {
-            delay(if (stalled) AfterStallMs else OverlayGoneMs)
+            if (waitOutOverlay) delay(if (stalled) AfterStallMs else OverlayGoneMs)
             stalled = false
             revealed = true
         }
@@ -115,18 +144,35 @@ private fun OneVideo(key: String, playing: Boolean, muted: Boolean, loop: Boolea
     // run ahead. After that it stays on through stalls and restarts.
     var shown by remember { mutableStateOf(false) }
     LaunchedEffect(revealed) { if (revealed) shown = true }
-    LaunchedEffect(ready, playing, muted, shown) {
+    // Preparing: playing muted until YouTube says it plays, which means the start is buffered; then back to 0, paused.
+    var preparing by remember { mutableStateOf(false) }
+    var prepared by remember { mutableStateOf(false) }
+    LaunchedEffect(ready, playing, muted, shown, prepare) {
         val v = view?.takeIf { ready } ?: return@LaunchedEffect
         v.js(if (muted || !shown) "player.mute()" else "player.unMute()")
-        v.js(if (playing) "player.playVideo()" else "player.pauseVideo()")
+        when {
+            playing -> {
+                preparing = false
+                v.js("player.playVideo()")
+            }
+            prepare && !prepared -> {
+                preparing = true
+                v.js("player.mute(); player.playVideo()")
+            }
+            else -> v.js("player.pauseVideo()")
+        }
     }
 
     // The page is told the view's shape: the TV's WebView gets 100vh wrong, centring the video too high and leaving
-    // black under it.
+    // black under it. And the video's: YouTube fits a 4:3 upload inside a 16:9 player with bars down the sides, and
+    // many old trailers are 4:3 with a 16:9 picture letterboxed in them, so they played boxed in on all four sides.
+    // Sized to the upload, the player covers the view and those bars fall outside it.
     var size by remember { mutableStateOf(IntSize.Zero) }
-    LaunchedEffect(ready, size) {
+    var aspect by remember { mutableStateOf(VideoShapes.cached(key) ?: WIDE) }
+    LaunchedEffect(key) { VideoShapes.aspect(key)?.let { aspect = it } }
+    LaunchedEffect(ready, size, aspect) {
         val v = view?.takeIf { ready && size.width > 0 } ?: return@LaunchedEffect
-        v.evaluateJavascript("fit(${size.height.toFloat() * PAGE_WIDTH / size.width})", null)
+        v.evaluateJavascript("fit(${size.height.toFloat() * PAGE_WIDTH / size.width}, $aspect)", null)
     }
 
     AndroidView(
@@ -158,7 +204,13 @@ private fun OneVideo(key: String, playing: Boolean, muted: Boolean, loop: Boolea
                         @JavascriptInterface
                         fun onState(code: Int) = post {
                             when (code) {
-                                YT_PLAYING -> update(TrailerState.Playing)
+                                YT_PLAYING -> if (preparing) {
+                                    preparing = false
+                                    prepared = true
+                                    js("player.pauseVideo(); player.seekTo(0, true)")
+                                } else {
+                                    update(TrailerState.Playing)
+                                }
                                 YT_BUFFERING -> if (player == TrailerState.Playing) {
                                     // A stall before the opening title has gone still waits the full time.
                                     stalled = revealed
@@ -205,6 +257,27 @@ private class PassThroughWebView(context: Context) : WebView(context) {
     override fun dispatchTouchEvent(event: MotionEvent) = false
 }
 
+/** Each upload's shape, width over height, from YouTube's oEmbed; asked once per video. */
+private object VideoShapes {
+    private val known = ConcurrentHashMap<String, Float>()
+    private val json = Json { ignoreUnknownKeys = true }
+
+    fun cached(key: String): Float? = known[key]
+
+    /** Null when YouTube can't be asked: the player then assumes 16:9, as most are. */
+    suspend fun aspect(key: String): Float? = known[key] ?: withContext(Dispatchers.IO) {
+        runCatching {
+            val c = URL("https://www.youtube.com/oembed?format=json&url=https://www.youtube.com/watch?v=$key").openConnection() as HttpURLConnection
+            c.connectTimeout = 4_000
+            c.readTimeout = 4_000
+            val o = c.inputStream.use { json.parseToJsonElement(it.reader().readText()) } as JsonObject
+            val w = o["width"]?.jsonPrimitive?.floatOrNull ?: return@runCatching null
+            val h = o["height"]?.jsonPrimitive?.floatOrNull?.takeIf { it > 0 } ?: return@runCatching null
+            (w / h).also { known[key] = it }
+        }.getOrNull()
+    }
+}
+
 private fun WebView.js(script: String) = evaluateJavascript("if (window.player && player.playVideo) { $script }", null)
 
 /**
@@ -228,6 +301,7 @@ private const val OverlayGoneMs = 4_000L
 private const val AfterStallMs = 1_000L
 /** The page's width in CSS pixels: a 1080p TV's full width, one CSS pixel to a screen pixel. */
 private const val PAGE_WIDTH = 1920
+private const val WIDE = 16f / 9f
 private const val YT_ENDED = 0
 private const val YT_PLAYING = 1
 private const val YT_PAUSED = 2
@@ -254,12 +328,14 @@ private fun playerHtml(key: String, zoom: Float) = """
   src="https://www.youtube.com/embed/$key?enablejsapi=1&mute=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&cc_load_policy=0&playsinline=1&rel=0&origin=$ORIGIN"></iframe>
 <script>
   var player;
-  // Covers a page [h] CSS pixels high, as the iframe's CSS would if 100vh were right.
-  function fit(h) {
+  // Covers a page [h] CSS pixels high with a video of shape [a] (width over height). The zoom past a 2.39:1
+  // trailer's bars is for 16:9 uploads; covering with a 4:3 one already crops its bars off.
+  function fit(h, a) {
     var w = $PAGE_WIDTH, f = document.getElementById('player').style;
+    var z = a > 1.5 ? $zoom : 1, fw = Math.max(w, h * a);
     document.documentElement.style.height = document.body.style.height = h + 'px';
-    f.width = Math.max(w, h * 16 / 9) * $zoom + 'px';
-    f.height = Math.max(h, w * 9 / 16) * $zoom + 'px';
+    f.width = fw * z + 'px';
+    f.height = fw / a * z + 'px';
     f.top = h / 2 + 'px';
     f.left = w / 2 + 'px';
   }
