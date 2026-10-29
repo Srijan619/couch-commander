@@ -16,29 +16,31 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * The signed-in TMDB session in a file, its id encrypted with an Android Keystore key that never leaves the TV
- * (garbled's TmdbSessionStore), so a backup or a copied data folder doesn't carry a usable session. If it can't be
- * decrypted (key wiped, restored elsewhere), the launcher is simply signed out.
+ * The signed-in TMDB session in a file, its session id and access token encrypted with an Android Keystore key that
+ * never leaves the TV (garbled's TmdbSessionStore), so a backup or a copied data folder doesn't carry a usable session.
+ * If it can't be decrypted (key wiped, restored elsewhere) or was saved before signing in moved to TMDB's v4 flow
+ * (no access token), the launcher is simply signed out.
  */
 class KeystoreSessionStore(dir: File) : SessionStore {
     private val file = File(dir, "tmdb-session.json")
     private val json = Json { ignoreUnknownKeys = true }
 
     @Serializable
-    private class Saved(val session: String, val accountId: Int, val username: String)
+    private class Saved(val session: String, val accessToken: String, val accountId: Int, val username: String)
 
     override suspend fun load(): TmdbSession? = withContext(Dispatchers.IO) {
         val saved = runCatching { json.decodeFromString(Saved.serializer(), file.readText()) }.getOrNull() ?: return@withContext null
         val sessionId = runCatching { decrypt(saved.session) }.getOrNull()
-        if (sessionId == null) {
+        val accessToken = runCatching { decrypt(saved.accessToken) }.getOrNull()
+        if (sessionId == null || accessToken == null) {
             file.delete()
             return@withContext null
         }
-        TmdbSession(sessionId, saved.accountId, saved.username)
+        TmdbSession(sessionId, saved.accountId, saved.username, accessToken)
     }
 
     override suspend fun save(session: TmdbSession) = withContext(Dispatchers.IO) {
-        val text = json.encodeToString(Saved.serializer(), Saved(encrypt(session.sessionId), session.accountId, session.username))
+        val text = json.encodeToString(Saved.serializer(), Saved(encrypt(session.sessionId), encrypt(session.accessToken), session.accountId, session.username))
         val tmp = File(file.parentFile, "${file.name}.tmp")
         tmp.writeText(text)
         tmp.renameTo(file)

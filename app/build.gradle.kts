@@ -24,8 +24,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
-        // The TMDB proxy garbled uses (it holds the TMDB key), for the Movies and TV pages.
-        buildConfigField("String", "STORE_URL", "\"https://garbled-store.onrender.com/\"")
+        // TMDB's API Read Access Token (not the short v3 API key), for the Movies and TV pages; see media-core's README.
         buildConfigField("String", "TMDB_API_KEY", "\"${localProps.getProperty("tmdb.apiKey") ?: ""}\"")
         buildConfigField("String", "TRAKT_CLIENT_ID", "\"$traktClientId\"")
     }

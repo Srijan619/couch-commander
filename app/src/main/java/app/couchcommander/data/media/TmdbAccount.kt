@@ -19,7 +19,7 @@ import kotlinx.coroutines.launch
 /** Where signing in stands while the account panel is open. */
 sealed interface SignIn {
     data object Idle : SignIn
-    /** Asking the proxy for a code; the first time after a quiet spell takes up to a minute. */
+    /** Asking TMDB for a code. */
     data object Starting : SignIn
     /** [url] is TMDB's approval page, shown as a QR code; this checks every few seconds whether it was approved. */
     data class Waiting(val url: String) : SignIn
@@ -76,7 +76,7 @@ class TmdbAccount(
             if (_signIn.value !is SignIn.Waiting) _signIn.value = SignIn.Starting
             while (true) {
                 val token = pending?.takeIf { clock() - pendingSince < TOKEN_REUSE_MS }
-                    ?: repo.requestToken()?.also {
+                    ?: repo.requestToken(redirectTo = null)?.also {
                         pending = it
                         pendingSince = clock()
                     }
@@ -84,7 +84,7 @@ class TmdbAccount(
                     _signIn.value = SignIn.Offline
                     return@launch
                 }
-                _signIn.value = SignIn.Waiting(repo.approvalUrl(token, redirectTo = null))
+                _signIn.value = SignIn.Waiting(repo.approvalUrl(token))
                 // Not yet approved reads the same as offline (no session), so keep asking until the token runs out.
                 while (clock() - pendingSince < TOKEN_REUSE_MS) {
                     repo.exchange(token)?.let {
@@ -159,7 +159,7 @@ class TmdbAccount(
         /** The shelves the account adds, in order. */
         val SHELVES = listOf(AccountList.Watchlist, AccountList.Favorites)
         const val POLL_MS = 3_000L
-        /** A little under TMDB's 60-minute token lifetime. */
-        const val TOKEN_REUSE_MS = 50 * 60 * 1000L
+        /** A little under TMDB's 15-minute request token lifetime. */
+        const val TOKEN_REUSE_MS = 12 * 60 * 1000L
     }
 }

@@ -109,12 +109,6 @@ fun AccountPanel(
             } else {
                 PanelRow("Cancel", accent, onDismiss, modifier = Modifier.focusRequester(first))
             }
-            if (signIn == SignIn.Starting) {
-                Text(
-                    "The first time after a quiet spell can take up to a minute.",
-                    fontSize = 12.sp, color = Palette.Muted, modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 10.dp),
-                )
-            }
         }
     }
 }

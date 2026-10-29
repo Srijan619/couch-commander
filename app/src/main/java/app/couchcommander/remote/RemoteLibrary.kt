@@ -102,7 +102,7 @@ class RemoteLibrary(private val context: Context, private val container: AppCont
     }
 
     /**
-     * The title from TMDB (through the same proxy as the Movies and TV page). To check availability, the phone's
+     * The title from TMDB (as on the Movies and TV page). To check availability, the phone's
      * name and year are enough; playing wants the poster and plot for Continue, but falls back to them offline.
      */
     private suspend fun details(ref: TitleRef, needFull: Boolean): MovieDetails {

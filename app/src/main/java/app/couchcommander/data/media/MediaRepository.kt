@@ -89,18 +89,18 @@ data class Shelves(
 }
 
 /**
- * Films and series from TMDB (media-core, through the garbled-store proxy) for the Movies and TV pages: each
+ * Films and series from TMDB (media-core, straight from TMDB's API) for the Movies and TV pages: each
  * page's shelves kept on disk so they show at once, refreshed when older than [MAX_AGE]. A title's details,
  * where to watch and episodes are kept in memory for the session. Search asks TMDB each time.
  */
-class MediaRepository(private val dir: File, client: HttpClient, baseUrl: String) {
+class MediaRepository(private val dir: File, client: HttpClient, token: String) {
     // Before the states: reading the files on disk needs it.
     private val json = Json { ignoreUnknownKeys = true }
-    private val repos = MediaKind.entries.associateWith { kind -> MovieRepository(client, baseUrl, ids = emptyList(), cache = NoCache, kind = kind) }
+    private val repos = MediaKind.entries.associateWith { kind -> MovieRepository(client, token, ids = emptyList(), cache = NoCache, kind = kind) }
     private val states = MediaKind.entries.associateWith { kind -> MutableStateFlow(read(kind)) }
     private val refreshing = MediaKind.entries.associateWith { Mutex() }
-    private val searcher = TmdbSearch(client, baseUrl)
-    private val people = TmdbPeople(client, baseUrl)
+    private val searcher = TmdbSearch(client, token)
+    private val people = TmdbPeople(client, token)
 
     private val details = Lru<MovieDetails>(64)
     private val extras = Lru<TitleExtras>(32)
@@ -109,8 +109,7 @@ class MediaRepository(private val dir: File, client: HttpClient, baseUrl: String
     fun shelves(kind: MediaKind): StateFlow<Shelves> = states.getValue(kind).asStateFlow()
 
     /**
-     * Fetches every shelf of [kind] unless the ones on disk are recent. A shelf that fails keeps what it had; the
-     * first call after the proxy has slept can take up to a minute.
+     * Fetches every shelf of [kind] unless the ones on disk are recent. A shelf that fails keeps what it had.
      */
     suspend fun refresh(kind: MediaKind, now: Instant, force: Boolean = false) = refreshing.getValue(kind).withLock {
         val state = states.getValue(kind)

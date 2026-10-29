@@ -28,7 +28,8 @@ class MediaRepositoryTest {
     private fun repository() = MediaRepository(
         dir,
         HttpClient(MockEngine { request ->
-            val path = request.url.encodedPath.removePrefix("/")
+            assertEquals("Bearer app-token", request.headers["Authorization"])
+            val path = request.url.encodedPath.removePrefix("/3/")
             asked += path
             if (offline) return@MockEngine respondError(HttpStatusCode.ServiceUnavailable)
             val genre = request.url.parameters["with_genres"]
@@ -46,7 +47,7 @@ class MediaRepositoryTest {
                 }
             }
         }) { install(HttpTimeout) },
-        "https://store.test",
+        "app-token",
     )
 
     @Test

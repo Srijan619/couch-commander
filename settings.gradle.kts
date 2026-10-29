@@ -16,7 +16,7 @@ dependencyResolutionManagement {
 
 // Football fixtures and live scores, shared with focus-launcher.
 includeBuild("../football-core")
-// Films and series from TMDB (garbled-store proxy), shared with garbled.
+// Films and series straight from TMDB, shared with garbled.
 includeBuild("../media-core")
 
 rootProject.name = "couch-commander"

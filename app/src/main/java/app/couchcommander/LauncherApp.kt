@@ -79,19 +79,18 @@ class AppContainer(app: Application) {
     val vod = VodRepository(app.filesDir, onLoaded = { ms -> android.util.Log.i("Iptv", "vod catalogue loaded in $ms ms") })
     val channelHealth = ChannelHealthStore(app.filesDir)
     val logos = ChannelLogos(app.cacheDir)
-    /** The proxy sleeps when idle and can take a minute to answer the first request after. */
     private val http = HttpClient(OkHttp) {
         install(HttpTimeout) {
             requestTimeoutMillis = 60_000
             connectTimeoutMillis = 15_000
         }
     }
-    val media = MediaRepository(app.filesDir, http, BuildConfig.STORE_URL)
+    val media = MediaRepository(app.filesDir, http, BuildConfig.TMDB_API_KEY)
     val images = RemoteImages(app.cacheDir)
     /** Films and series played lately, for the Movies and TV page's Continue shelf. */
     val played = ContinueWatching(app.filesDir)
     /** The user's TMDB account (watchlist, favourites, ratings), signed in from a phone. */
-    val tmdb = TmdbAccount(TmdbAccountRepository(http, "https://api.themoviedb.org/3", BuildConfig.TMDB_API_KEY), KeystoreSessionStore(app.filesDir), scope)
+    val tmdb = TmdbAccount(TmdbAccountRepository(http, BuildConfig.TMDB_API_KEY), KeystoreSessionStore(app.filesDir), scope)
     val traktStore = KeystoreTraktTokenStore(app.filesDir)
     val trakt = Trakt(http, BuildConfig.TRAKT_CLIENT_ID, traktStore, userAgent = "CouchCommander/0.1.0")
     val traktScrobbler = TraktScrobbler(app.filesDir, trakt, scope)

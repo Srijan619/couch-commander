@@ -308,7 +308,7 @@ fun MediaScreen(
                 // In the hero's place and height, so the shelves' placeholders sit where the shelves will.
                 Column(Modifier.padding(top = 4.dp).height(HERO_TEXT_HEIGHT), verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom)) {
                     Text(when (kind) { null -> "Getting films and series…"; MediaKind.Movie -> "Getting films…"; MediaKind.Tv -> "Getting series…" }, fontSize = 34.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
-                    Text("From TMDB. The first time after a quiet spell can take up to a minute.", fontSize = 15.sp, color = Palette.Muted)
+                    Text("From TMDB.", fontSize = 15.sp, color = Palette.Muted)
                 }
             }
 
