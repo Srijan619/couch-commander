@@ -18,6 +18,8 @@ dependencyResolutionManagement {
 includeBuild("../football-core")
 // Films and series straight from TMDB, shared with garbled.
 includeBuild("../media-core")
+// IPTV playlists, guides and VOD catalogues, shared with garbled.
+includeBuild("../iptv-core")
 
 rootProject.name = "couch-commander"
 include(":app")

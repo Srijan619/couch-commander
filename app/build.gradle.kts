@@ -54,6 +54,8 @@ dependencies {
     implementation("app.football:football-core")
     // The Movies and TV pages: TMDB lists, details, seasons and where to watch.
     implementation("app.media:media-core")
+    // Playlists, guides and VOD catalogues: reading them and matching them to matches and titles.
+    implementation("app.iptv:iptv-core")
     implementation(libs.ktor.client.okhttp)
     // The QR code for signing in to TMDB from a phone.
     implementation(libs.zxing.core)

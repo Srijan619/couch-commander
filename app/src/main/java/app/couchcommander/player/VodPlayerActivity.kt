@@ -29,11 +29,11 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.ui.PlayerView
 import app.couchcommander.LauncherApp
-import app.couchcommander.data.iptv.IptvHttp
-import app.couchcommander.data.iptv.IptvSource
-import app.couchcommander.data.iptv.NextEpisode
-import app.couchcommander.data.iptv.VodEpisode
-import app.couchcommander.data.iptv.XtreamVod
+import app.iptv.IptvHttp
+import app.iptv.IptvSource
+import app.iptv.NextEpisode
+import app.iptv.VodEpisode
+import app.iptv.XtreamVod
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import app.couchcommander.data.media.Watching

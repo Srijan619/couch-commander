@@ -63,11 +63,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.couchcommander.LauncherApp
-import app.couchcommander.data.iptv.IptvSource
-import app.couchcommander.data.iptv.VodEntry
-import app.couchcommander.data.iptv.VodEpisode
-import app.couchcommander.data.iptv.VodNames
-import app.couchcommander.data.iptv.XtreamVod
+import app.iptv.IptvSource
+import app.iptv.VodEntry
+import app.iptv.VodEpisode
+import app.iptv.VodNames
+import app.iptv.XtreamVod
 import app.couchcommander.domain.MediaText
 import app.couchcommander.player.VodPlay
 import app.couchcommander.player.VodPlayerActivity

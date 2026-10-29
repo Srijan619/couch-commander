@@ -101,7 +101,9 @@ adb shell am broadcast -n app.couchcommander/.data.iptv.IptvSourceReceiver -a ap
 adb logcat -s Iptv                                                                                            # result, without URLs
 ```
 
-How it stays light (`data/iptv/`): the sync runs twice a day, and also when the playlist or the followed teams change, on one low-priority thread. The playlist and guide are streamed and filtered while they download (live sports channels only, guide entries naming a followed team within the next 8 days), so neither file is ever held in memory or stored. Only the result goes into `iptv.json`. The source is encrypted with an Android Keystore key, and both files are left out of backups. Downloads stop at a size cap or after 5 minutes.
+Reading playlists, guides and VOD catalogues, and matching them to matches and TMDB titles, is the shared [`iptv-core`](../iptv-core) library (also used by Garbled), pulled in with `includeBuild("../iptv-core")`; its tests run with `./gradlew :iptv-core:test`. Storing the source, the adb receiver, logos and the players stay here (`data/iptv/`, `player/`).
+
+How it stays light: the sync runs twice a day, and also when the playlist or the followed teams change, on one low-priority thread. The playlist and guide are streamed and filtered while they download (live sports channels only, guide entries naming a followed team within the next 8 days), so neither file is ever held in memory or stored. Only the result goes into `iptv.json`. The source is encrypted with an Android Keystore key, and both files are left out of backups. Downloads stop at a size cap or after 5 minutes.
 
 ## Paintings
 

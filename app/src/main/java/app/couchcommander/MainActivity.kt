@@ -30,12 +30,12 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import app.couchcommander.data.iptv.ChannelHealth
+import app.iptv.ChannelHealth
 import app.couchcommander.domain.Accent
 import app.couchcommander.player.PlayerActivity
 import app.couchcommander.ui.football.FootballScreen
 import app.couchcommander.ui.media.MediaScreen
-import app.couchcommander.data.iptv.Names
+import app.iptv.Names
 import app.media.MediaKind
 import java.time.ZoneId
 import java.util.Locale

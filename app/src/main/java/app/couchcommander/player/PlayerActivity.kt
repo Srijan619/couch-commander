@@ -25,9 +25,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import app.couchcommander.LauncherApp
-import app.couchcommander.data.iptv.ChannelHealth
-import app.couchcommander.data.iptv.IptvChannel
-import app.couchcommander.data.iptv.IptvHttp
+import app.iptv.ChannelHealth
+import app.iptv.IptvChannel
+import app.iptv.IptvHttp
 import java.time.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json

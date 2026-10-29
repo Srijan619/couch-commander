@@ -1,10 +1,10 @@
 package app.couchcommander.ui.media
 
 import app.couchcommander.AppContainer
-import app.couchcommander.data.iptv.IptvSource
-import app.couchcommander.data.iptv.XtreamVod
 import app.couchcommander.data.media.Watching
 import app.couchcommander.player.VodPlay
+import app.iptv.IptvSource
+import app.iptv.XtreamVod
 import app.media.MediaKind
 
 /**

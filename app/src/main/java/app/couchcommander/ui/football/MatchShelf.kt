@@ -51,12 +51,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.couchcommander.data.iptv.Names
 import app.couchcommander.domain.TeamCodes
 import app.couchcommander.player.WatchAttempt
 import app.couchcommander.ui.theme.Palette
 import app.football.FootballBoards
 import app.football.FootballMatch
+import app.iptv.Names
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -344,7 +344,7 @@ private fun OpenCard(
 
 /** A channel in an opened card: logo, name, quality and country, the width of the card. White while focused. */
 @Composable
-private fun ChannelRow(label: String, channel: app.couchcommander.data.iptv.IptvChannel, accent: Color, active: State<Boolean>, focus: FocusRequester?, onClick: () -> Unit) {
+private fun ChannelRow(label: String, channel: app.iptv.IptvChannel, accent: Color, active: State<Boolean>, focus: FocusRequester?, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val shape = RoundedCornerShape(10.dp)
@@ -406,7 +406,7 @@ private fun EarlierDivider() {
 }
 
 /** Pressing a channel tries it first, then the other providers, then every other feed for the match. */
-internal fun watchAttempts(chips: MatchChips, first: app.couchcommander.data.iptv.WatchOption): List<WatchAttempt> =
+internal fun watchAttempts(chips: MatchChips, first: app.iptv.WatchOption): List<WatchAttempt> =
     (listOf(first) + chips.providers.map { it.second } + chips.usable).distinctBy { it.channel.url }.take(MAX_ATTEMPTS)
         .map { WatchAttempt(Names.provider(it.channel, it.score == 3), it.channel, event = it.score == 3) }
 

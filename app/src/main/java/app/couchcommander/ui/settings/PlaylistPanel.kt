@@ -43,13 +43,13 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.couchcommander.data.iptv.IptvSource
-import app.couchcommander.data.iptv.IptvState
-import app.couchcommander.data.iptv.VodStatus
 import app.couchcommander.ui.PanelRow
 import app.couchcommander.ui.PanelSection
 import app.couchcommander.ui.theme.Bricolage
 import app.couchcommander.ui.theme.Palette
+import app.iptv.IptvSource
+import app.iptv.IptvState
+import app.iptv.VodStatus
 import java.net.URI
 import java.util.Date
 
@@ -180,6 +180,7 @@ private fun status(source: IptvSource?, s: IptvState, vod: VodStatus, syncing: B
     }
     if (syncing) return "$kind\nSyncing…"
     val synced = s.syncedAtEpochMillis?.let { "synced ${time(Date(it))}" } ?: "not synced yet"
+    val vodSynced = vod.syncedAtEpochMillis
     val lines = listOfNotNull(
         kind,
         "${s.sportsChannels} sports channels, ${s.channels.size} showing your teams, $synced",
@@ -188,7 +189,7 @@ private fun status(source: IptvSource?, s: IptvState, vod: VodStatus, syncing: B
         when {
             source !is IptvSource.Xtream -> "Films and series need an Xtream playlist."
             vod.syncing -> "Films and series: syncing…"
-            vod.syncedAtEpochMillis != null -> "%,d films, %,d series, synced %s".format(vod.movies, vod.series, time(Date(vod.syncedAtEpochMillis)))
+            vodSynced != null -> "%,d films, %,d series, synced %s".format(vod.movies, vod.series, time(Date(vodSynced)))
             vod.error == null -> "Films and series: not synced yet"
             else -> null
         },

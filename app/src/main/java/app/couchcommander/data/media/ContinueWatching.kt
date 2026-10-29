@@ -1,6 +1,6 @@
 package app.couchcommander.data.media
 
-import app.couchcommander.data.iptv.VodNames
+import app.iptv.VodNames
 import app.media.MediaKind
 import app.media.MovieDetails
 import java.io.File

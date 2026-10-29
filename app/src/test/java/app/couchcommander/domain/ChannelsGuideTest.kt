@@ -1,8 +1,8 @@
 package app.couchcommander.domain
 
-import app.couchcommander.data.iptv.ChannelHealth
-import app.couchcommander.data.iptv.IptvChannel
-import app.couchcommander.data.iptv.WatchOption
+import app.iptv.ChannelHealth
+import app.iptv.IptvChannel
+import app.iptv.WatchOption
 import app.football.FootballMatch
 import app.football.MatchSide
 import java.time.Instant

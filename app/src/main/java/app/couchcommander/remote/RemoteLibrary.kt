@@ -4,13 +4,13 @@ import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import app.couchcommander.AppContainer
-import app.couchcommander.data.iptv.IptvSource
-import app.couchcommander.data.iptv.VodNames
-import app.couchcommander.data.iptv.XtreamVod
 import app.couchcommander.player.LivePlayback
 import app.couchcommander.player.VodPlay
 import app.couchcommander.player.VodPlayerActivity
 import app.couchcommander.ui.media.resumePlay
+import app.iptv.IptvSource
+import app.iptv.VodNames
+import app.iptv.XtreamVod
 import app.media.MediaKind
 import app.media.MovieDetails
 
@@ -66,7 +66,7 @@ class RemoteLibrary(private val context: Context, private val container: AppCont
             val start = request.startMs ?: leftHere?.positionMs?.takeIf { it >= RESUME_FROM_MS } ?: 0
             // TMDB's episode names, as on the title page; the panel's are often just its file name.
             val names = container.media.episodes(title, episode.season)?.associate { it.number to it.title }.orEmpty()
-            fun of(e: app.couchcommander.data.iptv.VodEpisode) =
+            fun of(e: app.iptv.VodEpisode) =
                 VodPlay(title, label, XtreamVod.episodeStreamUrl(src, e), e.id, e.ext, e.season, e.number, names[e.number].takeIf { e.season == episode.season }?.takeIf { it.isNotBlank() } ?: e.title)
             val after = eps.getOrNull(eps.indexOf(episode) + 1)
             of(episode).copy(startMs = start, next = after?.let(::of))
