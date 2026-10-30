@@ -67,16 +67,15 @@ import app.iptv.IptvSource
 import app.iptv.VodEntry
 import app.iptv.VodEpisode
 import app.iptv.VodNames
-import app.iptv.XtreamVod
+import app.iptv.VodPlays
 import app.couchcommander.domain.MediaText
-import app.couchcommander.player.VodPlay
-import app.couchcommander.player.VodPlayerActivity
+import app.player.VodPlayerActivity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.couchcommander.data.media.MediaRepository
 import app.couchcommander.data.media.TmdbAccount
-import app.couchcommander.data.media.Watching
+import app.iptv.Watching
 import app.couchcommander.ui.Icons
 import app.couchcommander.ui.home.confirmKeys
 import app.couchcommander.ui.page.ActionPill
@@ -147,7 +146,7 @@ fun TitleScreen(
     val watching = continued.firstOrNull { it.title.kind == title.kind && it.title.id == title.id }
     val labels = remember(versions) { VodNames.labels(versions.orEmpty()) }
     var picked by remember(title.id) { mutableStateOf<Int?>(null) }
-    val version = versions?.takeIf { it.isNotEmpty() }?.let { v -> (picked ?: v.indices.firstOrNull { labels[it] == watching?.version } ?: 0).coerceIn(v.indices) }
+    val version = versions?.takeIf { it.isNotEmpty() }?.let { v -> (picked ?: VodPlays.pick(labels, null, watching)).coerceIn(v.indices) }
     val chosen = version?.let { versions?.getOrNull(it) }
     var panelDone by remember(chosen?.id) { mutableStateOf(false) }
     val panelEpisodes by produceState<List<VodEpisode>?>(null, chosen?.id) {
@@ -157,13 +156,11 @@ fun TitleScreen(
     }
     val byNumber = remember(panelEpisodes) { panelEpisodes?.associateBy { it.season to it.number }.orEmpty() }
     // A series carries on from the episode it was left at, else starts at the first (specials last).
-    val upNext = panelEpisodes?.let { eps ->
-        watching?.let { w -> eps.firstOrNull { it.season == w.season && it.number == w.episode } } ?: eps.firstOrNull { it.season >= 1 } ?: eps.firstOrNull()
-    }
+    val upNext = panelEpisodes?.let { VodPlays.upNext(it, watching) }
     val canPlay = source is IptvSource.Xtream && chosen != null && (title.kind == MediaKind.Movie || upNext != null)
     // Play is still being worked out: the panel's versions, or a series' episodes on it.
     val playPending = source is IptvSource.Xtream && (versions == null || (title.kind == MediaKind.Tv && chosen != null && !panelDone))
-    val resumeAt = watching?.positionMs?.takeIf { it >= RESUME_FROM_MS && (title.kind == MediaKind.Movie || (watching.season == upNext?.season && watching.episode == upNext?.number)) }
+    val resumeAt = watching?.takeIf { title.kind == MediaKind.Movie || upNext != null }?.let { VodPlays.startAt(it, upNext) }?.takeIf { it > 0 }
 
     /** Starts [episode] (or the film) at [startMs] in the chosen version; a series' next episode follows it. */
     fun play(episode: VodEpisode?, episodeTitle: String?, startMs: Long) {
@@ -171,11 +168,10 @@ fun TitleScreen(
         val entry = chosen ?: return
         val label = labels[version ?: return]
         val p = if (episode == null) {
-            VodPlay(full, label, XtreamVod.movieStreamUrl(src, entry), entry.id, entry.ext, startMs = startMs)
+            VodPlays.film(src, full, label, entry, startMs)
         } else {
-            fun of(e: VodEpisode, name: String?) = VodPlay(full, label, XtreamVod.episodeStreamUrl(src, e), e.id, e.ext, e.season, e.number, name ?: e.title)
-            val after = panelEpisodes?.let { eps -> eps.getOrNull(eps.indexOf(episode) + 1) }
-            of(episode, episodeTitle).copy(startMs = startMs, next = after?.let { of(it, null) })
+            val names = episodeTitle?.let { mapOf(episode.number to it) }.orEmpty()
+            VodPlays.episode(src, full, label, panelEpisodes ?: listOf(episode), episode, startMs, names)
         }
         VodPlayerActivity.start(context, p)
     }
@@ -470,7 +466,7 @@ fun TitleScreen(
                         list.isEmpty() -> Text("No episodes listed for this season.", fontSize = 14.sp, color = Palette.Muted)
                         else -> list.forEach { e ->
                             val onPanel = byNumber[e.season to e.number]?.takeIf { canPlay }
-                            val left = watching?.takeIf { it.season == e.season && it.episode == e.number && it.positionMs >= RESUME_FROM_MS }
+                            val left = watching?.takeIf { it.season == e.season && it.episode == e.number && it.positionMs >= VodPlays.RESUME_FROM_MS }
                             EpisodeRow(
                                 e, next = full.nextEpisode?.let { it.season == e.season && it.number == e.number } == true, today, accent, active,
                                 playable = onPanel != null,
@@ -606,8 +602,6 @@ private const val SEASON_SETTLE_MS = 250L
 /** Rows shown while a season's length isn't known yet, and at most while it is. */
 private const val PLACEHOLDER_EPISODES = 6
 private const val MAX_PLACEHOLDER_EPISODES = 20
-/** Less than this in, a title starts over instead of offering Resume. */
-private const val RESUME_FROM_MS = 30_000L
 
 /** "1:02:03" or "42:10". */
 private fun playTime(ms: Long): String {

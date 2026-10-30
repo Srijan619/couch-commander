@@ -5,12 +5,10 @@ import android.content.Intent
 import android.os.SystemClock
 import app.couchcommander.AppContainer
 import app.couchcommander.player.LivePlayback
-import app.couchcommander.player.VodPlay
-import app.couchcommander.player.VodPlayerActivity
-import app.couchcommander.ui.media.resumePlay
+import app.player.VodPlayerActivity
 import app.iptv.IptvSource
 import app.iptv.VodNames
-import app.iptv.XtreamVod
+import app.iptv.VodPlays
 import app.media.MediaKind
 import app.media.MovieDetails
 
@@ -39,37 +37,30 @@ class RemoteLibrary(private val context: Context, private val container: AppCont
         watching?.takeIf { w ->
             request.startMs == null && (request.version == null || request.version == w.version) &&
                 (request.season == null || (request.season == w.season && request.episode == w.episode))
-        }?.let { resumePlay(container, it) }?.let { play ->
+        }?.let { VodPlays.resume(src, it) }?.let { play ->
             context.startActivity(VodPlayerActivity.intent(context, play).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
             return@runCatching Played(title.title, play.version, play.season, play.episode, play.startMs)
         }
         val versions = container.vod.find(title)
         if (versions.isEmpty()) throw RemoteFailure(404, "Not on the panel")
         val labels = VodNames.labels(versions)
-        // The version asked for, else the one played last, else the best.
-        val at = labels.indexOf(request.version).takeIf { it >= 0 } ?: labels.indexOf(watching?.version).takeIf { it >= 0 } ?: 0
+        val at = VodPlays.pick(labels, request.version, watching)
         val entry = versions[at]
         val label = labels[at]
 
         val play = if (title.kind == MediaKind.Movie) {
-            val start = request.startMs ?: watching?.positionMs?.takeIf { it >= RESUME_FROM_MS } ?: 0
-            VodPlay(title, label, XtreamVod.movieStreamUrl(src, entry), entry.id, entry.ext, startMs = start)
+            VodPlays.film(src, title, label, entry, request.startMs ?: VodPlays.startAt(watching, null))
         } else {
             val eps = container.vod.episodes(src, entry) ?: throw RemoteFailure(503, "The panel didn't answer")
-            val episode = when {
-                request.season != null && request.episode != null ->
-                    eps.firstOrNull { it.season == request.season && it.number == request.episode } ?: throw RemoteFailure(404, "That episode isn't on the panel")
-                else -> watching?.let { w -> eps.firstOrNull { it.season == w.season && it.number == w.episode } }
-                    ?: eps.firstOrNull { it.season >= 1 } ?: eps.firstOrNull() ?: throw RemoteFailure(404, "No episodes on the panel")
+            val episode = if (request.season != null && request.episode != null) {
+                eps.firstOrNull { it.season == request.season && it.number == request.episode } ?: throw RemoteFailure(404, "That episode isn't on the panel")
+            } else {
+                VodPlays.upNext(eps, watching) ?: throw RemoteFailure(404, "No episodes on the panel")
             }
-            val leftHere = watching?.takeIf { it.season == episode.season && it.episode == episode.number }
-            val start = request.startMs ?: leftHere?.positionMs?.takeIf { it >= RESUME_FROM_MS } ?: 0
+            val start = request.startMs ?: VodPlays.startAt(watching, episode)
             // TMDB's episode names, as on the title page; the panel's are often just its file name.
             val names = container.media.episodes(title, episode.season)?.associate { it.number to it.title }.orEmpty()
-            fun of(e: app.iptv.VodEpisode) =
-                VodPlay(title, label, XtreamVod.episodeStreamUrl(src, e), e.id, e.ext, e.season, e.number, names[e.number].takeIf { e.season == episode.season }?.takeIf { it.isNotBlank() } ?: e.title)
-            val after = eps.getOrNull(eps.indexOf(episode) + 1)
-            of(episode).copy(startMs = start, next = after?.let(::of))
+            VodPlays.episode(src, title, label, eps, episode, start, names)
         }
         context.startActivity(VodPlayerActivity.intent(context, play).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
         Played(title.title, label, play.season, play.episode, play.startMs)
@@ -112,10 +103,5 @@ class RemoteLibrary(private val context: Context, private val container: AppCont
         return container.media.details(stub)
             ?: stub.takeIf { !ref.title.isNullOrBlank() }
             ?: throw RemoteFailure(503, "TMDB didn't answer; send title and year")
-    }
-
-    private companion object {
-        /** Under this far in, a film or episode starts from the beginning, as on the title page. */
-        const val RESUME_FROM_MS = 30_000L
     }
 }

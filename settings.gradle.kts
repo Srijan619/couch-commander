@@ -20,6 +20,8 @@ includeBuild("../football-core")
 includeBuild("../media-core")
 // IPTV playlists, guides and VOD catalogues, shared with garbled.
 includeBuild("../iptv-core")
+// The film and series player, shared with garbled.
+includeBuild("../player-core")
 
 rootProject.name = "couch-commander"
 include(":app")

@@ -1,7 +1,9 @@
 package app.couchcommander.player
 
+import app.iptv.VodPlay
+
 /**
- * What the player has on screen right now, for a phone's `GET /now`. [VodPlayerActivity] writes it on the main
+ * What the player has on screen right now, for a phone's `GET /now`. The shared player writes it on the main
  * thread whenever the player changes; the remote server reads it from its own, so it's a snapshot, never the player.
  */
 object LivePlayback {

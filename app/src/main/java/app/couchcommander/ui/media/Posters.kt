@@ -50,7 +50,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.couchcommander.LauncherApp
-import app.couchcommander.data.media.Watching
+import app.iptv.Watching
 import app.couchcommander.ui.home.confirmKeys
 import app.couchcommander.ui.theme.Palette
 import app.media.MovieDetails

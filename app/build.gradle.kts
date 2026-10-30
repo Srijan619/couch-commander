@@ -56,6 +56,8 @@ dependencies {
     implementation("app.media:media-core")
     // Playlists, guides and VOD catalogues: reading them and matching them to matches and titles.
     implementation("app.iptv:iptv-core")
+    // The film and series player, shared with garbled.
+    implementation("app.player:player-core")
     implementation(libs.ktor.client.okhttp)
     // The QR code for signing in to TMDB from a phone.
     implementation(libs.zxing.core)

@@ -67,12 +67,14 @@ import app.couchcommander.data.art.ArtFrame
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.couchcommander.data.media.MediaRepository
 import app.couchcommander.data.media.MediaSearch
-import app.couchcommander.data.media.ContinueWatching
-import app.couchcommander.data.media.Watching
+import app.iptv.ContinueWatching
+import app.iptv.VodPlays
+import app.iptv.IptvSource
+import app.iptv.Watching
 import app.couchcommander.data.media.TmdbAccount
 import app.couchcommander.data.media.Shelf
 import app.couchcommander.data.media.Shelves
-import app.couchcommander.player.VodPlayerActivity
+import app.player.VodPlayerActivity
 import app.couchcommander.ui.Icons
 import app.couchcommander.ui.home.confirmKeys
 import app.couchcommander.ui.page.ActionPill
@@ -161,7 +163,9 @@ fun MediaScreen(
     fun resume(left: Watching) {
         if (resuming?.isActive == true) return
         resuming = searchScope.launch {
-            val play = resumePlay((context.applicationContext as LauncherApp).container, left)
+            val source = (context.applicationContext as LauncherApp).container.iptvSource.source.value as? IptvSource.Xtream
+            val play = source?.let { VodPlays.resume(it, left) }
+            // Without an Xtream playlist, the title's page opens instead.
             if (play != null) VodPlayerActivity.start(context, play) else opened = listOf(left.title)
         }
     }

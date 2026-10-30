@@ -65,12 +65,6 @@
             android:exported="false"
             android:theme="@style/Theme.CouchCommander.Player" />
 
-        <!-- Films and episodes from the IPTV panel, for the Movies and TV page. -->
-        <activity
-            android:name=".player.VodPlayerActivity"
-            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize"
-            android:exported="false"
-            android:theme="@style/Theme.CouchCommander.Player" />
 
         <!-- The code a phone pairing to play on the TV asks for (see RemoteApi). -->
         <activity

@@ -21,7 +21,7 @@ import app.iptv.WatchOption
 import app.couchcommander.data.media.KeystoreSessionStore
 import app.couchcommander.data.media.KeystoreTraktTokenStore
 import app.couchcommander.data.media.MediaRepository
-import app.couchcommander.data.media.ContinueWatching
+import app.iptv.ContinueWatching
 import app.couchcommander.data.media.RemoteImages
 import app.couchcommander.data.media.TmdbAccount
 import app.couchcommander.data.media.TraktScrobbler
@@ -31,6 +31,9 @@ import app.couchcommander.remote.RemoteApi
 import app.couchcommander.remote.RemoteLibrary
 import app.couchcommander.remote.RemoteServer
 import app.couchcommander.remote.RemoteTokens
+import app.couchcommander.player.TvPlayerHost
+import app.player.PlayerHost
+import app.player.PlayerHostProvider
 import app.media.MediaKind
 import app.media.TmdbAccountRepository
 import app.media.trakt.Trakt
@@ -210,9 +213,12 @@ private const val IPTV_TICK_MS = 30 * 60_000L
 private const val VOD_START_DELAY_MS = 3 * 60_000L
 private val LEAGUE_WATCH_AHEAD: Duration = Duration.ofDays(2)
 
-class LauncherApp : Application() {
+class LauncherApp : Application(), PlayerHostProvider {
     lateinit var container: AppContainer
         private set
+
+    /** What the shared player (player-core) plays from, and who it tells what's playing. */
+    override val playerHost: PlayerHost by lazy { TvPlayerHost(container) }
 
     override fun onCreate() {
         super.onCreate()

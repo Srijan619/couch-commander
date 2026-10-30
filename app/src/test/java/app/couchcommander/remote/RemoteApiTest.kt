@@ -1,7 +1,7 @@
 package app.couchcommander.remote
 
 import app.couchcommander.player.LivePlayback
-import app.couchcommander.player.VodPlay
+import app.iptv.VodPlay
 import java.io.ByteArrayInputStream
 import java.nio.file.Files
 import org.junit.Test
