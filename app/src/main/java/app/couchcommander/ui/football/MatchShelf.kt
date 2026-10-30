@@ -53,6 +53,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.couchcommander.domain.TeamCodes
+import app.couchcommander.domain.MatchChips
+import app.couchcommander.domain.MatchWatch
 import app.couchcommander.player.WatchAttempt
 import app.couchcommander.ui.theme.Palette
 import app.football.FootballBoards
@@ -337,7 +339,7 @@ private fun OpenCard(
                 }
                 shown.forEachIndexed { i, (label, option) ->
                     ChannelRow(label, option.channel, accent, active, focus = if (i == 0) target else if (i == restoreAt) back else null) {
-                        onWatch(match, watchAttempts(chips!!, option))
+                        onWatch(match, MatchWatch.attempts(chips!!, option))
                     }
                 }
                 val more = providers.size - shown.size
@@ -412,11 +414,6 @@ private fun EarlierDivider() {
         Box(Modifier.width(2.dp).weight(1f).background(Palette.Raised))
     }
 }
-
-/** Pressing a channel tries it first, then the other providers, then every other feed for the match. */
-internal fun watchAttempts(chips: MatchChips, first: app.iptv.WatchOption): List<WatchAttempt> =
-    (listOf(first) + chips.providers.map { it.second } + chips.usable).distinctBy { it.channel.url }.take(MAX_ATTEMPTS)
-        .map { WatchAttempt(Names.provider(it.channel, it.score == 3), it.channel, event = it.score == 3) }
 
 /** Poster colours rotate along the shelf; they aren't club colours. */
 private val POSTER_COLORS = listOf(0xFF8C2F39, 0xFF2A3590, 0xFF1E6B52, 0xFF5A3C8F, 0xFF8A5410).map { Color(it) }

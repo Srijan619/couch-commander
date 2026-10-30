@@ -87,6 +87,8 @@ import app.couchcommander.player.WatchAttempt
 import app.couchcommander.domain.FootballPage
 import app.couchcommander.domain.FootballText
 import app.couchcommander.domain.LeaguePage
+import app.couchcommander.domain.MatchChips
+import app.couchcommander.domain.MatchWatch
 import app.couchcommander.ui.Icons
 import app.couchcommander.ui.page.ActionPill
 import app.couchcommander.ui.page.RowCard
@@ -392,14 +394,7 @@ private fun FootballFooterHints(inTabs: Boolean, hasTarget: Boolean, showChannel
 internal fun channelKey(channel: IptvChannel) = "channel:" + ChannelHealth.key(channel)
 internal fun matchKey(match: FootballMatch, channel: IptvChannel) = "match:${match.id}:${channel.url}"
 
-/** A match's ways to watch: [usable] feeds in the order to try them, and [providers], one per chip. */
-internal data class MatchChips(val usable: List<WatchOption>, val providers: List<Pair<String, WatchOption>>)
-
-/**
- * Hidden channels drop out, ones that played lately come first and recent failures last (ChannelHealth); then one
- * chip per provider, the viewer's country first. Health counts more than country: a Finnish channel that just failed
- * still goes after one that works. Chips equal to [previous]'s are its very objects.
- */
+/** Each match's chips (see MatchWatch.chips). Chips equal to [previous]'s are its very objects. */
 private fun chipsFor(
     watch: Map<Long, List<WatchOption>>,
     health: Map<String, ChannelRecord>,
@@ -408,10 +403,7 @@ private fun chipsFor(
 ): Map<Long, MatchChips> {
     val now = Instant.now()
     return watch.filterValues { it.isNotEmpty() }.mapValues { (id, options) ->
-        val usable = ChannelHealth.order(options, health, now) { it.channel }
-        val byLabel = usable.groupBy { Names.provider(it.channel, it.score == 3) }.mapValues { it.value.first() }
-        val byCountry = Names.homeFirst(byLabel.keys.toList(), home).map { it to byLabel.getValue(it) }
-        val chips = MatchChips(usable, ChannelHealth.order(byCountry, health, now) { it.second.channel })
+        val chips = MatchWatch.chips(options, health, home, now)
         previous[id]?.takeIf { it == chips } ?: chips
     }
 }
@@ -471,7 +463,5 @@ private val LogoGround = Color(0xF2FFFFFF)
 private val LogoGroundDark = Color(0xFF1B1B26)
 private val LogoGroundOnWhite = Color(0xFFE8E8EE)
 private val LogoEdge = Color(0x290B0B12)
-/** How many channels the player works through before giving up (15 s each at worst). */
-internal const val MAX_ATTEMPTS = 6
 /** "+N" opens up to this many over two lines; more than that is noise. */
 internal const val MAX_EXPANDED = 8

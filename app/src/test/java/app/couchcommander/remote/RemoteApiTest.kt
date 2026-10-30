@@ -1,6 +1,8 @@
 package app.couchcommander.remote
 
 import app.couchcommander.player.LivePlayback
+import app.football.FootballLeague
+import app.football.FootballTeam
 import app.iptv.VodPlay
 import java.io.ByteArrayInputStream
 import java.nio.file.Files
@@ -26,7 +28,25 @@ class RemoteApiTest {
         override fun continueWatching() = listOf(ContinueItem(603, "movie", "The Matrix", version = "EN 4K", positionMs = 60_000, durationMs = 8_160_000, atEpochMillis = 1))
         override fun removeContinue(ref: TitleRef) = ref.tmdb == 603
         override fun now() = nowPlaying
+        override fun traktUser() = traktUser
+        override fun football() = picks
+        override fun footballChannels() = FootballChannels(
+            emptyList(),
+            listOf(ChannelTile("Sports|V Sport Jalkapallo", "V Sport Jalkapallo", "FI · FHD")),
+            listOf(ChannelBrand("Sky Sports", listOf(ChannelTile("UK|Sky Sports Main Event FHD", "Sky Sports Main Event", "UK · FHD", live = true)))),
+        )
+        override fun playChannel(request: PlayChannel): Result<PlayingChannel> =
+            if (request.key == "Sports|V Sport Jalkapallo") Result.success(PlayingChannel(request.label ?: "V Sport Jalkapallo"))
+            else Result.failure(RemoteFailure(404, "That channel isn't in the TV's playlist any more"))
+        override fun watchMatch(request: WatchMatch): Result<WatchingMatch> {
+            if (request.match != 4_500_001L) return Result.failure(RemoteFailure(404, "No channel on the TV shows this match"))
+            watched += request
+            return Result.success(WatchingMatch("HJK – KuPS", request.provider ?: "Ruutu FI"))
+        }
     }
+    private var traktUser: String? = null
+    private var picks = FootballPicks(emptyList(), emptyList())
+    private val watched = mutableListOf<WatchMatch>()
     private var nowPlaying = Now()
     private val tokens = RemoteTokens(Files.createTempDirectory("remote").toFile())
     private val pairing = Pairing(tokens)
@@ -45,6 +65,62 @@ class RemoteApiTest {
         val r = api.handle(Request("GET", "/info"))
         assertEquals(200, r.status)
         assertTrue(r.body.contains("Living room"))
+    }
+
+    @Test fun traktGivesOnlyTheUsername() = runTest {
+        assertEquals(401, api.handle(Request("GET", "/trakt")).status)
+        val auth = mapOf("authorization" to "Bearer ${pair()}")
+        assertEquals("{}", api.handle(Request("GET", "/trakt", headers = auth)).body)
+        traktUser = "sofa_watcher"
+        val r = api.handle(Request("GET", "/trakt", headers = auth))
+        assertEquals(200, r.status)
+        assertEquals("""{"username":"sofa_watcher"}""", r.body)
+    }
+
+    @Test fun footballGivesTheTvsPicks() = runTest {
+        assertEquals(401, api.handle(Request("GET", "/football")).status)
+        val auth = mapOf("authorization" to "Bearer ${pair()}")
+        assertEquals("""{"teams":[],"leagues":[]}""", api.handle(Request("GET", "/football", headers = auth)).body)
+        picks = FootballPicks(listOf(FootballTeam(4217, "HJK", "Veikkausliiga")), listOf(FootballLeague(47, "Premier League", "ENG")))
+        val r = api.handle(Request("GET", "/football", headers = auth))
+        assertEquals(200, r.status)
+        assertEquals(
+            """{"teams":[{"id":4217,"name":"HJK","league":"Veikkausliiga"}],"leagues":[{"id":47,"name":"Premier League","country":"ENG"}]}""",
+            r.body,
+        )
+    }
+
+    @Test fun footballGivesEachMatchsChannels() = runTest {
+        val auth = mapOf("authorization" to "Bearer ${pair()}")
+        picks = FootballPicks(emptyList(), emptyList(), mapOf(4_500_001L to listOf("Ruutu FI", "beIN")))
+        assertEquals(
+            """{"teams":[],"leagues":[],"channels":{"4500001":["Ruutu FI","beIN"]}}""",
+            api.handle(Request("GET", "/football", headers = auth)).body,
+        )
+    }
+
+    @Test fun watchesAMatchOnTheTv() = runTest {
+        assertEquals(401, api.handle(Request("POST", "/football/watch", body = """{"match":4500001}""")).status)
+        val auth = mapOf("authorization" to "Bearer ${pair()}")
+        val r = api.handle(Request("POST", "/football/watch", headers = auth, body = """{"match":4500001,"provider":"beIN"}"""))
+        assertEquals(200, r.status)
+        assertEquals("""{"match":"HJK – KuPS","channel":"beIN"}""", r.body)
+        assertEquals(listOf(WatchMatch(4_500_001L, "beIN")), watched)
+        val missing = api.handle(Request("POST", "/football/watch", headers = auth, body = """{"match":1}"""))
+        assertEquals(404, missing.status)
+        assertTrue("No channel" in missing.body)
+    }
+
+    @Test fun channelsListAndPlay() = runTest {
+        assertEquals(401, api.handle(Request("GET", "/football/channels")).status)
+        val auth = mapOf("authorization" to "Bearer ${pair()}")
+        val list = api.handle(Request("GET", "/football/channels", headers = auth))
+        assertEquals(200, list.status)
+        assertTrue(""""live":true""" in list.body)
+        assertTrue(""""mostWatched":[{"key":"Sports|V Sport Jalkapallo""" in list.body)
+        val r = api.handle(Request("POST", "/channels/play", headers = auth, body = """{"key":"Sports|V Sport Jalkapallo"}"""))
+        assertEquals("""{"channel":"V Sport Jalkapallo"}""", r.body)
+        assertEquals(404, api.handle(Request("POST", "/channels/play", headers = auth, body = """{"key":"gone"}""")).status)
     }
 
     @Test fun unpairedIsRefused() = runTest {

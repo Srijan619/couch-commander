@@ -66,6 +66,7 @@ import app.iptv.Names
 import app.iptv.PopularChannels
 import app.iptv.WatchOption
 import app.couchcommander.domain.ChannelsGuide
+import app.couchcommander.domain.MatchWatch.MAX_ATTEMPTS
 import app.couchcommander.player.WatchAttempt
 import app.couchcommander.ui.home.confirmKeys
 import app.couchcommander.ui.page.CardGround
@@ -287,7 +288,7 @@ private fun sections(
  * A channel under a match in "On now". A slot named after the match ("ESPN LIVE | CA OSASUNA VS. RACING") goes by its
  * provider, as on the match's own chips; a regular channel as in its brand's list, with the brand.
  */
-private fun matchPick(option: WatchOption): PopularChannels.Pick {
+internal fun matchPick(option: WatchOption): PopularChannels.Pick {
     if (option.score < 3) return PopularChannels.pick(option.channel)
     val (name, detail) = tileText(Names.provider(option.channel, event = true), option.channel)
     return PopularChannels.Pick(option.channel, name, detail.takeIf { it != "Live" }.orEmpty())

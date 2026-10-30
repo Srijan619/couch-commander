@@ -16,6 +16,7 @@ import app.iptv.IptvSource
 import app.iptv.IptvState
 import app.couchcommander.data.iptv.IptvSourceStore
 import app.iptv.WatchFinder
+import app.iptv.TraktContinue
 import app.iptv.VodRepository
 import app.iptv.WatchOption
 import app.couchcommander.data.media.KeystoreSessionStore
@@ -97,6 +98,8 @@ class AppContainer(app: Application) {
     val traktStore = KeystoreTraktTokenStore(app.filesDir)
     val trakt = Trakt(http, BuildConfig.TRAKT_CLIENT_ID, traktStore, userAgent = "CouchCommander/0.1.0")
     val traktScrobbler = TraktScrobbler(app.filesDir, trakt, scope)
+    /** Films and episodes left partway on the phone (or anywhere on the Trakt account), onto [played]. */
+    val traktContinue = TraktContinue(trakt, played, vod, { iptvSource.source.value }, media::details, media::episodes)
     /** Phones paired to play on the TV (see RemoteApi). */
     val remoteTokens = RemoteTokens(app.filesDir)
     val pairing = Pairing(remoteTokens)
@@ -132,7 +135,9 @@ class AppContainer(app: Application) {
         scope.launch {
             trakt.load()
             traktScrobbler.flush()
+            traktContinue.pull()
         }
+        scope.launch { traktContinue.followRemovals() }
         val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         runCatching {
             cm?.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
@@ -144,7 +149,10 @@ class AppContainer(app: Application) {
         // Both pages' shelves at start and each time the page opens or closes; the repository only fetches them
         // when they're more than a few hours old.
         scope.launch {
-            mediaPageOpen.collect { MediaKind.entries.forEach { kind -> launch { media.refresh(kind, Instant.now()) } } }
+            mediaPageOpen.collect { open ->
+                MediaKind.entries.forEach { kind -> launch { media.refresh(kind, Instant.now()) } }
+                if (open) launch { traktContinue.pull() }
+            }
         }
         // The account's watchlist and favourites each time the page opens while signed in (a phone or another app
         // may have changed them), and as soon as the saved session is read.

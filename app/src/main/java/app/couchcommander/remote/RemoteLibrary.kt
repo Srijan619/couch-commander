@@ -4,13 +4,28 @@ import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import app.couchcommander.AppContainer
+import app.couchcommander.domain.ChannelsGuide
+import app.couchcommander.domain.MatchChips
+import app.couchcommander.domain.MatchWatch
+import app.couchcommander.player.PlayerActivity
+import app.couchcommander.player.WatchAttempt
+import app.couchcommander.ui.football.matchPick
+import app.iptv.ChannelHealth
+import app.iptv.IptvChannel
+import app.iptv.PopularChannels
 import app.couchcommander.player.LivePlayback
 import app.player.VodPlayerActivity
 import app.iptv.IptvSource
+import app.iptv.Names
+import app.iptv.WatchOption
 import app.iptv.VodNames
 import app.iptv.VodPlays
 import app.media.MediaKind
 import app.media.MovieDetails
+import java.time.Instant
+import java.time.ZoneId
+import java.util.Locale
+import kotlinx.coroutines.launch
 
 /**
  * The phone's requests against the TV's own catalogue and Continue shelf: the same matching, version order and
@@ -66,11 +81,15 @@ class RemoteLibrary(private val context: Context, private val container: AppCont
         Played(title.title, label, play.season, play.episode, play.startMs)
     }
 
-    override fun continueWatching(): List<ContinueItem> = container.played.all.value.map { w ->
-        ContinueItem(
-            w.title.id, typeOf(w.title.kind), w.title.title, w.title.posterPath, w.title.backdropPath, w.version,
-            w.positionMs, w.durationMs, w.season, w.episode, w.episodeTitle, w.atEpochMillis,
-        )
+    override fun continueWatching(): List<ContinueItem> {
+        // What was left on the phone shows on the next ask (Trakt is asked at most every few minutes).
+        container.scope.launch { container.traktContinue.pull() }
+        return container.played.all.value.map { w ->
+            ContinueItem(
+                w.title.id, typeOf(w.title.kind), w.title.title, w.title.posterPath, w.title.backdropPath, w.version,
+                w.positionMs, w.durationMs, w.season, w.episode, w.episodeTitle, w.atEpochMillis,
+            )
+        }
     }
 
     override fun now(): Now {
@@ -84,6 +103,75 @@ class RemoteLibrary(private val context: Context, private val container: AppCont
             ),
         )
     }
+
+    override fun traktUser(): String? = container.trakt.username.value
+
+    override fun football(): FootballPicks {
+        val config = container.config.config.value
+        val channels = container.watch.value.mapValues { (_, options) -> chips(options).providers.map { it.first } }.filterValues { it.isNotEmpty() }
+        return FootballPicks(config.footballTeams, config.footballLeagues, channels)
+    }
+
+    override fun watchMatch(request: WatchMatch): Result<WatchingMatch> = runCatching {
+        if (container.iptvSource.source.value == null) throw RemoteFailure(503, "No playlist on the TV")
+        val match = (container.football.matches.value + container.leagues.matches.value.values.flatten()).firstOrNull { it.id == request.match }
+            ?: throw RemoteFailure(404, "The TV doesn't follow that match")
+        val chips = chips(container.watch.value[match.id].orEmpty())
+        val first = chips.providers.firstOrNull { it.first == request.provider } ?: chips.providers.firstOrNull()
+            ?: throw RemoteFailure(404, "No channel on the TV shows this match")
+        val attempts = MatchWatch.attempts(chips, first.second)
+        context.startActivity(
+            PlayerActivity.intent(context, attempts, match.kickoff).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        )
+        WatchingMatch("${match.home.name} – ${match.away.name}", first.first)
+    }
+
+    override fun footballChannels(): FootballChannels {
+        val state = container.iptv.state.value
+        if (container.iptvSource.source.value == null) return FootballChannels(emptyList(), emptyList(), emptyList())
+        val health = container.channelHealth.records.value
+        val now = Instant.now()
+        val zone = ZoneId.systemDefault()
+        // As the football page orders them: the followed teams' matches, then each league's in tab order.
+        val leagues = container.config.config.value.footballLeagues
+        val matches = (container.football.matches.value + leagues.flatMap { container.leagues.matches.value[it.id].orEmpty() }).distinctBy { it.id }
+        val watch = container.watch.value
+        val guide = ChannelsGuide.byChannel(matches, watch, now, zone)
+        fun tile(pick: PopularChannels.Pick, name: String = pick.name) =
+            ChannelTile(ChannelHealth.key(pick.channel), name, pick.detail, pick.channel.logo, guide[ChannelHealth.key(pick.channel)]?.live == true)
+        val onNow = ChannelsGuide.onNow(matches, watch).mapNotNull { (m, options) ->
+            ChannelHealth.order(options, health, now) { it.channel }.take(PopularChannels.MAX_PER_BRAND).takeIf { it.isNotEmpty() }
+                ?.let { o -> OnNowMatch(m, o.map { tile(matchPick(it)) }) }
+        }
+        val most = ChannelHealth.mostWatched(health, state.popular + state.channels).map { tile(PopularChannels.pick(it)) }
+        val brands = PopularChannels.group(ChannelHealth.order(state.popular, health, now) { it }, home())
+            .map { b -> ChannelBrand(b.name, (b.sharp + b.other).map { tile(it, PopularChannels.withBrand(it.name, b.name)) }) }
+            .filter { it.channels.isNotEmpty() }
+        return FootballChannels(onNow, most, brands)
+    }
+
+    override fun playChannel(request: PlayChannel): Result<PlayingChannel> = runCatching {
+        if (container.iptvSource.source.value == null) throw RemoteFailure(503, "No playlist on the TV")
+        val state = container.iptv.state.value
+        val all = (state.popular + state.channels).distinctBy { it.url }
+        val channel = all.firstOrNull { ChannelHealth.key(it) == request.key } ?: throw RemoteFailure(404, "That channel isn't in the TV's playlist any more")
+        // As a tile on the Channels tab: the same channel's other feeds after it, should it not start.
+        val same = Names.channel(channel.name)
+        val others = all.filter { it.url != channel.url && Names.channel(it.name) == same }
+        val label = request.label ?: PopularChannels.pick(channel).name
+        val attempts = (listOf(channel) + others).take(MatchWatch.MAX_ATTEMPTS).map { WatchAttempt(label, it, event = false) }
+        context.startActivity(
+            PlayerActivity.intent(context, attempts, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        )
+        PlayingChannel(label)
+    }
+
+    private fun home() = Names.homeCountry(ZoneId.systemDefault().id, Locale.getDefault().country)
+
+    /** The football page's chips for a match: hidden channels out, the ones that played lately and the home country first. */
+    private fun chips(options: List<WatchOption>): MatchChips = MatchWatch.chips(
+        options, container.channelHealth.records.value, home(), Instant.now(),
+    )
 
     override fun removeContinue(ref: TitleRef): Boolean {
         val kind = ref.kind ?: return false

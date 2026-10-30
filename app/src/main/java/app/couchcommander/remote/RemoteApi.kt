@@ -1,5 +1,8 @@
 package app.couchcommander.remote
 
+import app.football.FootballLeague
+import app.football.FootballMatch
+import app.football.FootballTeam
 import app.media.MediaKind
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -53,6 +56,46 @@ data class ContinueItem(
 @OptIn(ExperimentalSerializationApi::class)
 data class Now(@EncodeDefault val playing: Boolean = false, val item: ContinueItem? = null)
 
+/**
+ * The TV's football picks, for the phone's Football tab: they're chosen on the TV, the phone only follows them.
+ * [channels] names the providers that show each match the TV can play, by match id, in the order of its chips.
+ */
+@Serializable
+data class FootballPicks(
+    val teams: List<FootballTeam>,
+    val leagues: List<FootballLeague>,
+    val channels: Map<Long, List<String>> = emptyMap(),
+)
+
+/** Watch match [match] on the TV; [provider] is a label from [FootballPicks.channels], else the first. */
+@Serializable
+data class WatchMatch(val match: Long, val provider: String? = null)
+
+/** What the TV started: the match and the channel it's trying first. */
+@Serializable
+data class WatchingMatch(val match: String, val channel: String)
+
+/** A channel tile as the Channels tab shows it; [key] names it for `/channels/play`, [live] while it shows a match. */
+@Serializable
+data class ChannelTile(val key: String, val name: String, val detail: String, val logo: String? = null, val live: Boolean = false)
+
+@Serializable
+data class OnNowMatch(val match: FootballMatch, val channels: List<ChannelTile>)
+
+@Serializable
+data class ChannelBrand(val name: String, val channels: List<ChannelTile>)
+
+/** The football page's Channels tab: what's showing a match now, the channels watched most, then each brand. */
+@Serializable
+data class FootballChannels(val onNow: List<OnNowMatch>, val mostWatched: List<ChannelTile>, val brands: List<ChannelBrand>)
+
+/** Play the channel [key] names, its other feeds as fallbacks; [label] is the tile's name for the "trying…" line. */
+@Serializable
+data class PlayChannel(val key: String, val label: String? = null)
+
+@Serializable
+data class PlayingChannel(val channel: String)
+
 @Serializable
 data class Played(val title: String, val version: String, val season: Int? = null, val episode: Int? = null, val startMs: Long = 0)
 
@@ -65,6 +108,16 @@ interface Library {
     fun removeContinue(ref: TitleRef): Boolean
     /** The film or episode playing now, with its live position. */
     fun now(): Now
+    /** The Trakt account the TV reports to; null when signed out. Only the name: the sign-in stays on the TV. */
+    fun traktUser(): String?
+    /** The followed teams and the leagues with a tab on the football page, in the TV's order. */
+    fun football(): FootballPicks
+    /** Starts the match full screen, from the chosen provider with the others as fallbacks, as the football page does. */
+    fun watchMatch(request: WatchMatch): Result<WatchingMatch>
+    /** The Channels tab's channels, in its order; empty without a playlist. */
+    fun footballChannels(): FootballChannels
+    /** Plays a channel full screen as its tile on the Channels tab would. */
+    fun playChannel(request: PlayChannel): Result<PlayingChannel>
 }
 
 class RemoteFailure(val status: Int, message: String) : Exception(message)
@@ -80,6 +133,11 @@ class RemoteFailure(val status: Int, message: String) : Exception(message)
  *     GET    /continue                                → {items:[…]}, the latest first
  *     DELETE /continue?tmdb=603&type=movie            → off the shelf (watched, or not wanted)
  *     GET    /now                                     → {playing, item?}: what's on screen, its position live
+ *     GET    /trakt                                   → {username?}: the TV's Trakt account, for the phone to match
+ *     GET    /football                                → {teams:[{id,name,league?}], leagues:[{id,name,country?}], channels?:{"<match>":["Viaplay FI",…]}}
+ *     POST   /football/watch {match, provider?}       → {match, channel}: the match plays on the TV
+ *     GET    /football/channels                       → {onNow:[{match, channels}], mostWatched:[…], brands:[{name, channels}]}
+ *     POST   /channels/play  {key, label?}            → {channel}: that channel plays on the TV
  */
 class RemoteApi(
     private val library: Library,
@@ -98,6 +156,7 @@ class RemoteApi(
     @Serializable private data class Token(val token: String)
     @Serializable private data class ContinueList(val items: List<ContinueItem>)
     @Serializable private data class Removed(val removed: Boolean)
+    @Serializable private data class TraktUser(val username: String? = null)
 
     suspend fun handle(r: Request): Response = try {
         route(r)
@@ -134,6 +193,11 @@ class RemoteApi(
             "GET" to "/continue" -> ok(ContinueList.serializer(), ContinueList(library.continueWatching()))
             "DELETE" to "/continue" -> ok(Removed.serializer(), Removed(library.removeContinue(queryRef(r))))
             "GET" to "/now" -> ok(Now.serializer(), library.now())
+            "GET" to "/trakt" -> ok(TraktUser.serializer(), TraktUser(library.traktUser()))
+            "GET" to "/football" -> ok(FootballPicks.serializer(), library.football())
+            "POST" to "/football/watch" -> ok(WatchingMatch.serializer(), library.watchMatch(parse(WatchMatch.serializer(), r.body)).getOrThrow())
+            "GET" to "/football/channels" -> ok(FootballChannels.serializer(), library.footballChannels())
+            "POST" to "/channels/play" -> ok(PlayingChannel.serializer(), library.playChannel(parse(PlayChannel.serializer(), r.body)).getOrThrow())
             else -> Response.error(404, "No ${r.method} ${r.path}")
         }
     }
