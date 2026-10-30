@@ -89,6 +89,10 @@ data class ChannelBrand(val name: String, val channels: List<ChannelTile>)
 @Serializable
 data class FootballChannels(val onNow: List<OnNowMatch>, val mostWatched: List<ChannelTile>, val brands: List<ChannelBrand>)
 
+/** A match's feeds in the order the TV would try them from a provider, for a phone to play them itself. */
+@Serializable
+data class MatchFeeds(val channels: List<ChannelTile>)
+
 /** Play the channel [key] names, its other feeds as fallbacks; [label] is the tile's name for the "trying…" line. */
 @Serializable
 data class PlayChannel(val key: String, val label: String? = null)
@@ -114,6 +118,8 @@ interface Library {
     fun football(): FootballPicks
     /** Starts the match full screen, from the chosen provider with the others as fallbacks, as the football page does. */
     fun watchMatch(request: WatchMatch): Result<WatchingMatch>
+    /** [match]'s feeds as Watch on TV would try them from [provider] (null: the best), as tiles. Empty when it's on nowhere. */
+    fun matchFeeds(match: Long, provider: String?): MatchFeeds
     /** The Channels tab's channels, in its order; empty without a playlist. */
     fun footballChannels(): FootballChannels
     /** Plays a channel full screen as its tile on the Channels tab would. */
@@ -136,6 +142,7 @@ class RemoteFailure(val status: Int, message: String) : Exception(message)
  *     GET    /trakt                                   → {username?}: the TV's Trakt account, for the phone to match
  *     GET    /football                                → {teams:[{id,name,league?}], leagues:[{id,name,country?}], channels?:{"<match>":["Viaplay FI",…]}}
  *     POST   /football/watch {match, provider?}       → {match, channel}: the match plays on the TV
+ *     GET    /football/feeds?match=4500001[&provider=beIN] → {channels:[…]}: its feeds in the order the TV tries them
  *     GET    /football/channels                       → {onNow:[{match, channels}], mostWatched:[…], brands:[{name, channels}]}
  *     POST   /channels/play  {key, label?}            → {channel}: that channel plays on the TV
  */
@@ -196,6 +203,10 @@ class RemoteApi(
             "GET" to "/trakt" -> ok(TraktUser.serializer(), TraktUser(library.traktUser()))
             "GET" to "/football" -> ok(FootballPicks.serializer(), library.football())
             "POST" to "/football/watch" -> ok(WatchingMatch.serializer(), library.watchMatch(parse(WatchMatch.serializer(), r.body)).getOrThrow())
+            "GET" to "/football/feeds" -> {
+                val match = requireNotNull(r.query["match"]?.toLongOrNull()) { "match is required" }
+                ok(MatchFeeds.serializer(), library.matchFeeds(match, r.query["provider"]))
+            }
             "GET" to "/football/channels" -> ok(FootballChannels.serializer(), library.footballChannels())
             "POST" to "/channels/play" -> ok(PlayingChannel.serializer(), library.playChannel(parse(PlayChannel.serializer(), r.body)).getOrThrow())
             else -> Response.error(404, "No ${r.method} ${r.path}")

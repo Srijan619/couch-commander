@@ -42,7 +42,16 @@ class ChannelsGuideTest {
         val early = m(1, "2026-10-17T13:30:00Z", started = true)
         val late = m(2, "2026-10-17T14:00:00Z", started = true)
         val nowhere = m(3, "2026-10-17T14:00:00Z", started = true)
-        val result = ChannelsGuide.onNow(listOf(late, nowhere, early), mapOf(1L to on(a, a), 2L to on(b)))
+        val result = ChannelsGuide.onNow(listOf(late, nowhere, early), mapOf(1L to on(a, a), 2L to on(b)), now)
         assertEquals(listOf(2L to listOf(b), 1L to listOf(a)), result.map { (m, o) -> m.id to o.map { it.channel } }, "in the order given, once per channel")
+    }
+
+    @Test
+    fun `a match Footy never finished isn't on now the next day`() {
+        val main = ch("Main Event")
+        // Kicked off yesterday evening; the day list only covers today, so its final whistle never arrived.
+        val stuck = m(5, "2026-10-16T18:00:00Z", started = true)
+        assertEquals(emptyList(), ChannelsGuide.onNow(listOf(stuck), mapOf(5L to on(main)), now))
+        assertEquals(null, ChannelsGuide.byChannel(listOf(stuck), mapOf(5L to on(main)), now, zone)[ChannelHealth.key(main)])
     }
 }

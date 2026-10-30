@@ -30,6 +30,8 @@ class RemoteApiTest {
         override fun now() = nowPlaying
         override fun traktUser() = traktUser
         override fun football() = picks
+        override fun matchFeeds(match: Long, provider: String?) =
+            MatchFeeds(if (match == 4_500_001L) listOf(ChannelTile("Sports|beIN 1", provider ?: "Ruutu FI", "FR · FHD")) else emptyList())
         override fun footballChannels() = FootballChannels(
             emptyList(),
             listOf(ChannelTile("Sports|V Sport Jalkapallo", "V Sport Jalkapallo", "FI · FHD")),
@@ -121,6 +123,13 @@ class RemoteApiTest {
         val r = api.handle(Request("POST", "/channels/play", headers = auth, body = """{"key":"Sports|V Sport Jalkapallo"}"""))
         assertEquals("""{"channel":"V Sport Jalkapallo"}""", r.body)
         assertEquals(404, api.handle(Request("POST", "/channels/play", headers = auth, body = """{"key":"gone"}""")).status)
+    }
+
+    @Test fun matchFeedsInTryOrder() = runTest {
+        val auth = mapOf("authorization" to "Bearer ${pair()}")
+        val r = api.handle(Request("GET", "/football/feeds", query = mapOf("match" to "4500001", "provider" to "beIN"), headers = auth))
+        assertEquals("""{"channels":[{"key":"Sports|beIN 1","name":"beIN","detail":"FR · FHD"}]}""", r.body)
+        assertEquals(400, api.handle(Request("GET", "/football/feeds", headers = auth)).status)
     }
 
     @Test fun unpairedIsRefused() = runTest {

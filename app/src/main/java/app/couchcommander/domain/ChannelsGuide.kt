@@ -21,10 +21,10 @@ object ChannelsGuide {
         val result = HashMap<String, OnChannel>()
         // Live ones first, then the rest by kickoff, so the first match a channel gets is the one to show.
         val relevant = matches
-            .filter { !it.finished && !it.cancelled && (it.live || it.kickoff.isAfter(now) && it.kickoff.atZone(zone).toLocalDate() == today) }
-            .sortedWith(compareByDescending<FootballMatch> { it.live }.thenBy { it.kickoffEpochMillis })
+            .filter { !it.finished && !it.cancelled && (it.liveAt(now) || it.kickoff.isAfter(now) && it.kickoff.atZone(zone).toLocalDate() == today) }
+            .sortedWith(compareByDescending<FootballMatch> { it.liveAt(now) }.thenBy { it.kickoffEpochMillis })
         for (m in relevant) {
-            val on = OnChannel(m, m.live)
+            val on = OnChannel(m, m.liveAt(now))
             watch[m.id].orEmpty().forEach { result.putIfAbsent(ChannelHealth.key(it.channel), on) }
         }
         return result
@@ -32,9 +32,10 @@ object ChannelsGuide {
 
     /**
      * The matches live now that are on at least one channel, in the order given (the page's tab order: the followed
-     * teams', then each league's), each with where it's on.
+     * teams', then each league's), each with where it's on. Live as of [now] (FootballMatch.liveAt): a match whose
+     * final whistle Footy never reported isn't on now a day later.
      */
-    fun onNow(matches: List<FootballMatch>, watch: Map<Long, List<WatchOption>>): List<Pair<FootballMatch, List<WatchOption>>> =
-        matches.filter { it.live }
+    fun onNow(matches: List<FootballMatch>, watch: Map<Long, List<WatchOption>>, now: Instant): List<Pair<FootballMatch, List<WatchOption>>> =
+        matches.filter { it.liveAt(now) }
             .mapNotNull { m -> watch[m.id]?.distinctBy { it.channel.url }?.takeIf { it.isNotEmpty() }?.let { m to it } }
 }

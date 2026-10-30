@@ -126,6 +126,15 @@ class RemoteLibrary(private val context: Context, private val container: AppCont
         WatchingMatch("${match.home.name} – ${match.away.name}", first.first)
     }
 
+    override fun matchFeeds(match: Long, provider: String?): MatchFeeds {
+        val chips = chips(container.watch.value[match].orEmpty())
+        val first = chips.providers.firstOrNull { it.first == provider } ?: chips.providers.firstOrNull() ?: return MatchFeeds(emptyList())
+        return MatchFeeds(MatchWatch.attempts(chips, first.second).map { a ->
+            val pick = PopularChannels.pick(a.channel)
+            ChannelTile(ChannelHealth.key(a.channel), a.label, pick.detail, a.channel.logo)
+        })
+    }
+
     override fun footballChannels(): FootballChannels {
         val state = container.iptv.state.value
         if (container.iptvSource.source.value == null) return FootballChannels(emptyList(), emptyList(), emptyList())
@@ -139,7 +148,7 @@ class RemoteLibrary(private val context: Context, private val container: AppCont
         val guide = ChannelsGuide.byChannel(matches, watch, now, zone)
         fun tile(pick: PopularChannels.Pick, name: String = pick.name) =
             ChannelTile(ChannelHealth.key(pick.channel), name, pick.detail, pick.channel.logo, guide[ChannelHealth.key(pick.channel)]?.live == true)
-        val onNow = ChannelsGuide.onNow(matches, watch).mapNotNull { (m, options) ->
+        val onNow = ChannelsGuide.onNow(matches, watch, now).mapNotNull { (m, options) ->
             ChannelHealth.order(options, health, now) { it.channel }.take(PopularChannels.MAX_PER_BRAND).takeIf { it.isNotEmpty() }
                 ?.let { o -> OnNowMatch(m, o.map { tile(matchPick(it)) }) }
         }

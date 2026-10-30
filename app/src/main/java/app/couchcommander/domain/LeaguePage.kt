@@ -28,10 +28,10 @@ object LeaguePage {
         fun day(m: FootballMatch) = m.kickoff.atZone(zone).toLocalDate()
         val played = matches.filter { !it.cancelled }
         // A match past midnight that's still on counts as today's.
-        val todays = played.filter { day(it) == today || it.live }
+        val todays = played.filter { day(it) == today || it.liveAt(now) }
         // A match Footy never marked finished is over all the same, a while after kickoff.
         val (results, open) = todays.partition { it.finished || !now.isBefore(it.kickoff.plus(MatchTimes.STALE_AFTER)) }
-        val ordered = open.sortedWith(compareBy<FootballMatch> { if (it.live) 0 else 1 }.thenBy { it.kickoffEpochMillis }) +
+        val ordered = open.sortedWith(compareBy<FootballMatch> { if (it.liveAt(now)) 0 else 1 }.thenBy { it.kickoffEpochMillis }) +
             results.sortedBy { it.kickoffEpochMillis }
         val first = if (todays.isNotEmpty()) null else played.filter { day(it).isAfter(today) }.minByOrNull { it.kickoffEpochMillis }
         val nextMatches = first?.let { f -> played.filter { day(it) == day(f) }.sortedBy { it.kickoffEpochMillis } }.orEmpty()

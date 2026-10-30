@@ -260,7 +260,7 @@ private fun sections(
     fun live(picks: List<PopularChannels.Pick>) = picks.count { guide[ChannelHealth.key(it.channel)]?.live == true }
     fun subtitle(count: Int, live: Int) = "$count channels" + if (live > 0) " · $live showing a match now" else ""
     val result = mutableListOf<Section>()
-    val onNow = ChannelsGuide.onNow(matches, watch).mapNotNull { (m, options) ->
+    val onNow = ChannelsGuide.onNow(matches, watch, now).mapNotNull { (m, options) ->
         ChannelHealth.order(options, health, now) { it.channel }.take(PopularChannels.MAX_PER_BRAND).takeIf { it.isNotEmpty() }
             ?.let { Group(m, null, it.map(::matchPick)) }
     }

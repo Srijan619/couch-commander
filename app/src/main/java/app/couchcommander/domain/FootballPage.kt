@@ -27,9 +27,9 @@ object FootballPage {
         fun rank(m: FootballMatch) = teams.indexOfFirst { it.id == m.home.id || it.id == m.away.id }
         val own = matches
             .filter { !it.cancelled && !it.finished && (it.home.id in ids || it.away.id in ids) && now.isBefore(it.kickoff.plus(MatchTimes.STALE_AFTER)) }
-            .sortedWith(compareBy<FootballMatch> { if (it.live) 0 else 1 }.thenBy { it.kickoffEpochMillis }.thenBy { rank(it) })
+            .sortedWith(compareBy<FootballMatch> { if (it.liveAt(now)) 0 else 1 }.thenBy { it.kickoffEpochMillis }.thenBy { rank(it) })
         val today = now.atZone(zone).toLocalDate()
-        val (watchable, later) = own.partition { it.live || !it.kickoff.atZone(zone).toLocalDate().isAfter(today) }
+        val (watchable, later) = own.partition { it.liveAt(now) || !it.kickoff.atZone(zone).toLocalDate().isAfter(today) }
         val upcoming = if (watchable.isNotEmpty()) emptyList()
         else teams.mapNotNull { t -> later.firstOrNull { it.home.id == t.id || it.away.id == t.id } }.distinctBy { it.id }.sortedBy { it.kickoffEpochMillis }
         return Today(watchable.take(MAX_MATCHES), later.firstOrNull(), upcoming)

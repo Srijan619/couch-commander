@@ -57,6 +57,11 @@ import app.couchcommander.domain.MatchChips
 import app.couchcommander.domain.MatchWatch
 import app.couchcommander.player.WatchAttempt
 import app.couchcommander.ui.theme.Palette
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import app.football.FootballBoards
 import app.football.FootballMatch
 import app.iptv.Names
@@ -161,6 +166,7 @@ internal fun dayName(kickoff: Instant, now: Instant, zone: ZoneId): String {
 
 /** What a poster shows, worked out once for both its closed and opened forms. */
 private class PosterText(
+    val homeId: Int, val awayId: Int,
     val home: String, val away: String, val mid: String, val color: Color, val live: Boolean, val result: Boolean,
     val mine: Boolean, val time: String, val sub: String, val progress: Float?, val kickLabel: String, val aria: String,
 )
@@ -173,7 +179,7 @@ private fun Poster(
     val kickoff = FootballBoards.timeLabel(m.kickoff, zone, is24Hour)
     val dayName = if (showDay) m.kickoff.atZone(zone).format(DateTimeFormatter.ofPattern("EEE", Locale.getDefault())) else null
     val channels = chips?.providers?.size ?: 0
-    val live = m.live && !result
+    val live = m.liveAt(now) && !result
     val time = when {
         result -> m.result ?: score
         live -> m.liveTime ?: "Live"
@@ -191,6 +197,7 @@ private fun Poster(
         else -> listOfNotNull(dayName, kickoff).joinToString(" ")
     } + if (mine) ", your team" else ""
     return PosterText(
+        m.home.id, m.away.id,
         TeamCodes.code(m.home.name), TeamCodes.code(m.away.name), if (result || m.started) score else "v",
         if (result) ResultColor else color, live, result, mine, time, sub,
         progress = if (live && minute != null) (minute / 90f).coerceIn(0f, 1f) else null,
@@ -198,11 +205,19 @@ private fun Poster(
     )
 }
 
-/** The coloured top of a poster: LIVE or FT, a dot for a followed team, and the two codes over the score. */
+/**
+ * The coloured top of a poster: LIVE or FT, a dot for a followed team, and the two codes over the score, each team's
+ * crest beside its code (home above, away below). The ground runs from the home crest's colour at the top to the
+ * away crest's at the bottom through a dark middle; a side whose crest has no colour keeps the shelf's colour.
+ */
 @Composable
 private fun PosterBand(p: PosterText, accent: Color) {
+    val home = rememberCrest(p.homeId)
+    val away = rememberCrest(p.awayId)
+    val ground = if (home.tone == null && away.tone == null) SolidColor(p.color)
+    else Brush.verticalGradient(0f to (home.tone ?: p.color), 0.5f to CardBottom, 1f to (away.tone ?: p.color))
     Column(
-        Modifier.width(POSTER_WIDTH).height(BAND_HEIGHT).background(p.color).padding(12.dp),
+        Modifier.width(POSTER_WIDTH).height(BAND_HEIGHT).background(ground).padding(12.dp),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
         Row(Modifier.fillMaxWidth().height(20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -220,11 +235,18 @@ private fun PosterBand(p: PosterText, accent: Color) {
             if (p.mine) Box(Modifier.size(9.dp).clip(CircleShape).background(accent))
         }
         Column {
+            home.image?.let { PosterCrest(it) }
             Text(p.home, fontSize = 34.sp, lineHeight = 34.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp, maxLines = 1)
             Text(p.mid, fontSize = 15.sp, lineHeight = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.padding(vertical = 2.dp))
             Text(p.away, fontSize = 34.sp, lineHeight = 34.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1).sp, maxLines = 1)
+            away.image?.let { PosterCrest(it) }
         }
     }
+}
+
+@Composable
+private fun PosterCrest(image: ImageBitmap) {
+    Image(image, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.padding(vertical = 2.dp).size(28.dp))
 }
 
 /** A poster on the shelf. Focusing a match still to come opens it (the shelf swaps in its [OpenCard]). */
