@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
@@ -274,8 +275,12 @@ private fun OpenCard(
     val providers = chips?.providers.orEmpty()
     // Opened to all of them when the channel played was one past the first few.
     var all by remember(match.id) { mutableStateOf(restoreUrl != null && providers.take(OPEN_CHIPS).none { it.second.channel.url == restoreUrl }) }
-    // The poster that had focus is gone; its first channel takes over. Likewise after "All N channels".
-    LaunchedEffect(match.id, all) { if ((grab || all) && restoreUrl == null) { withFrameNanos { }; runCatching { target.requestFocus() } } }
+    // The poster that had focus is gone; its first channel takes over. Likewise after "All N channels". At once, in
+    // the frame that swaps them: a frame later, Android has already handed focus to the open tab and that frame shows it.
+    DisposableEffect(match.id, all) {
+        if ((grab || all) && restoreUrl == null) runCatching { target.requestFocus() }
+        onDispose { }
+    }
     val back = remember { FocusRequester() }
     val empty = providers.isEmpty()
     val interaction = remember { MutableInteractionSource() }
@@ -346,7 +351,9 @@ private fun OpenCard(
 @Composable
 private fun ChannelRow(label: String, channel: app.iptv.IptvChannel, accent: Color, active: State<Boolean>, focus: FocusRequester?, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
+    // From the focus itself, not the interaction: the first channel takes focus in the frame it's built, before an
+    // interaction collector would be listening.
+    var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
     val fg = if (focused) Palette.Ink else Palette.White
     val (name, detail) = tileText(label, channel)
@@ -357,6 +364,7 @@ private fun ChannelRow(label: String, channel: app.iptv.IptvChannel, accent: Col
             .then(if (focused) Modifier.border(3.dp, accent, shape) else Modifier)
             .clip(shape)
             .background(if (focused) Palette.White else Palette.Raised)
+            .onFocusChanged { focused = it.isFocused }
             .focusProperties { canFocus = active.value }
             .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
             .fillMaxWidth().height(40.dp)
